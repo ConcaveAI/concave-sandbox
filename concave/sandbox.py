@@ -36,19 +36,21 @@ class ExecuteResult:
 @dataclass
 class RunResult:
     """
-    Result from running Python code in the sandbox.
+    Result from running code in the sandbox.
 
     Attributes:
-        stdout: Standard output from the Python execution
-        stderr: Standard error from the Python execution
-        returncode: Exit code from the Python execution (0 = success)
-        code: The original Python code that was executed
+        stdout: Standard output from the code execution
+        stderr: Standard error from the code execution
+        returncode: Exit code from the code execution (0 = success)
+        code: The original code that was executed
+        language: The language that was executed (python or nodejs)
     """
 
     stdout: str
     stderr: str
     returncode: int
     code: str
+    language: str = "python"
 
 
 class SandboxError(Exception):
@@ -209,7 +211,7 @@ class Sandbox:
         self._sandboxes_url = f"{self.api_base}/sandboxes"
 
         # HTTP client configuration
-        headers = {"User-Agent": "concave-sandbox/0.1.2", "Content-Type": "application/json"}
+        headers = {"User-Agent": "concave-sandbox/0.1.3", "Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
@@ -249,7 +251,7 @@ class Sandbox:
 
         # Create HTTP client for the creation request
         headers = {
-            "User-Agent": "concave-sandbox/0.1.2",
+            "User-Agent": "concave-sandbox/0.1.3",
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
         }
@@ -393,31 +395,40 @@ class Sandbox:
         except httpx.RequestError as e:
             raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
 
-    def run(self, code: str, timeout: Optional[int] = None) -> RunResult:
+    def run(self, code: str, timeout: Optional[int] = None, language: str = "python") -> RunResult:
         """
-        Run Python code in the sandbox with tmpfs-backed isolation.
+        Run code in the sandbox with tmpfs-backed isolation.
 
         Args:
-            code: Python code to execute
+            code: Code to execute
             timeout: Timeout in milliseconds (default: 10000ms)
+            language: Programming language to use (default: "python"). Supported: "python", "nodejs"
 
         Returns:
-            RunResult containing stdout, stderr, return code, and original code
+            RunResult containing stdout, stderr, return code, original code, and language
 
         Raises:
             SandboxExecutionError: If the execution request fails
             SandboxNotFoundError: If the sandbox is not found
-            ValueError: If code is empty
+            SandboxValidationError: If code is empty or language is unsupported
 
         Example:
-            result = sbx.run("import time; time.sleep(1)", timeout=3000)  # 3 second timeout
+            # Run Python code
+            result = sbx.run("import time; time.sleep(1)", timeout=3000)
+            print(result.stdout)
+
+            # Run Node.js code
+            result = sbx.run("console.log('Hello from Node.js')", language="nodejs")
             print(result.stdout)
         """
         if not code.strip():
             raise SandboxValidationError("Code cannot be empty")
 
+        if language not in ["python", "nodejs"]:
+            raise SandboxValidationError(f"Unsupported language: {language}. Supported: python, nodejs")
+
         # Prepare request payload
-        request_data = {"code": code}
+        request_data = {"code": code, "language": language}
         if timeout is not None:
             request_data["timeout"] = timeout
 
@@ -428,7 +439,7 @@ class Sandbox:
 
         try:
             response = self._client.post(
-                f"{self._sandboxes_url}/{self.sandbox_id}/python",
+                f"{self._sandboxes_url}/{self.sandbox_id}/run",
                 json=request_data,
                 timeout=request_timeout,
             )
@@ -439,13 +450,14 @@ class Sandbox:
             if "error" in data:
                 if "sandbox not found" in data["error"].lower():
                     raise SandboxNotFoundError(f"Sandbox {self.sandbox_id} not found")
-                raise SandboxExecutionError(f"Python execution failed: {data['error']}")
+                raise SandboxExecutionError(f"Code execution failed: {data['error']}")
 
             return RunResult(
                 stdout=data.get("stdout", ""),
                 stderr=data.get("stderr", ""),
                 returncode=data.get("returncode", -1),
                 code=code,
+                language=language,
             )
 
         except httpx.HTTPStatusError as e:
@@ -457,7 +469,7 @@ class Sandbox:
             elif status_code == 429:
                 raise SandboxRateLimitError("Rate limit exceeded") from e
             elif status_code == 500:
-                raise SandboxInternalError("Server error during Python execution") from e
+                raise SandboxInternalError(f"Server error during {language} execution") from e
             elif status_code == 502 or status_code == 503:
                 raise SandboxUnavailableError(
                     f"Sandbox {self.sandbox_id} is not ready or unreachable", status_code
@@ -470,12 +482,12 @@ class Sandbox:
                         error_msg += f": {error_data['error']}"
                 except Exception:
                     error_msg += f": {e.response.text}"
-                raise SandboxExecutionError(f"Failed to run Python code: {error_msg}") from e
+                raise SandboxExecutionError(f"Failed to run {language} code: {error_msg}") from e
 
         except httpx.TimeoutException as e:
             timeout_val = timeout if timeout else 10000
             raise SandboxTimeoutError(
-                "Python execution timed out", timeout_ms=timeout_val, operation="run"
+                f"{language.capitalize()} execution timed out", timeout_ms=timeout_val, operation="run"
             ) from e
         except httpx.RequestError as e:
             raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
