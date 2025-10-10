@@ -55,6 +55,8 @@ with sandbox(name="multi-lang", api_key="cnc_your_api_key_here") as sbx:
     print(result.stdout)  # Hello from Node.js!
 ```
 
+> **Note**: Python runtime is recommended for better performance. The Node.js runtime typically has slower cold start times and higher overhead.
+
 ### Manual Cleanup
 
 If you prefer to manage the sandbox lifecycle yourself:

@@ -211,7 +211,7 @@ class Sandbox:
         self._sandboxes_url = f"{self.api_base}/sandboxes"
 
         # HTTP client configuration
-        headers = {"User-Agent": "concave-sandbox/0.1.3", "Content-Type": "application/json"}
+        headers = {"User-Agent": "concave-sandbox/0.1.4", "Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
@@ -251,7 +251,7 @@ class Sandbox:
 
         # Create HTTP client for the creation request
         headers = {
-            "User-Agent": "concave-sandbox/0.1.3",
+            "User-Agent": "concave-sandbox/0.1.4",
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
         }
