@@ -1,4 +1,4 @@
-.PHONY: clean build test-publish publish install-dev help
+.PHONY: clean build test-publish publish install-dev lint format check help
 
 help:
 	@echo "Concave AI - PyPI Publishing Commands"
@@ -9,6 +9,9 @@ help:
 	@echo "  test-publish  - Publish to TestPyPI"
 	@echo "  publish       - Publish to PyPI (production)"
 	@echo "  install-dev   - Install in development mode"
+	@echo "  lint          - Run ruff linter"
+	@echo "  format        - Format code with ruff"
+	@echo "  check         - Run linter and check formatting"
 	@echo "  help          - Show this help message"
 
 clean:
@@ -32,7 +35,7 @@ test-publish: build
 	@echo ""
 	@echo "✓ Published to TestPyPI"
 	@echo "Test installation with:"
-	@echo "  pip install --index-url https://test.pypi.org/simple/ concave-ai"
+	@echo "  pip install --index-url https://test.pypi.org/simple/ concave-sandbox"
 
 publish: build
 	@echo "Publishing to PyPI..."
@@ -42,7 +45,7 @@ publish: build
 		python -m twine upload dist/*; \
 		echo ""; \
 		echo "✓ Published to PyPI"; \
-		echo "Install with: pip install concave-ai"; \
+		echo "Install with: pip install concave-sandbox"; \
 	else \
 		echo "Aborted."; \
 	fi
@@ -50,5 +53,21 @@ publish: build
 install-dev:
 	@echo "Installing in development mode..."
 	pip install -e .
+	pip install -r requirements-dev.txt
 	@echo "✓ Development installation complete"
+
+lint:
+	@echo "Running ruff linter..."
+	ruff check .
+	@echo "✓ Linting complete"
+
+format:
+	@echo "Formatting code with ruff..."
+	ruff format .
+	@echo "✓ Formatting complete"
+
+check: lint
+	@echo "Checking code formatting..."
+	ruff format --check .
+	@echo "✓ All checks passed"
 

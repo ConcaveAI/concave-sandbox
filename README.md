@@ -4,17 +4,17 @@
 
 ## Features
 
-- 🔒 **Secure Isolation**: Each sandbox runs in its own Firecracker microVM for strong security
-- ⚡ **Fast Performance**: Lightweight VMs boot in milliseconds
-- 🐍 **Python-First**: Native support for executing Python code with tmpfs-backed isolation
-- 🛠️ **Shell Access**: Execute arbitrary shell commands in the sandbox
-- 🎯 **Simple API**: Clean, intuitive interface with context manager support
-- 📦 **Production Ready**: Comprehensive error handling and type hints
+- **Secure Isolation**: Each sandbox runs in its own Firecracker microVM for strong security
+- **Fast Performance**: Lightweight VMs boot in milliseconds
+- **Python-First**: Native support for executing Python code with tmpfs-backed isolation
+- **Shell Access**: Execute arbitrary shell commands in the sandbox
+- **Simple API**: Clean, intuitive interface with context manager support
+- **Production Ready**: Comprehensive error handling and type hints
 
 ## Installation
 
 ```bash
-pip install concave-ai
+pip install concave-sandbox
 ```
 
 ## Quick Start
@@ -223,7 +223,7 @@ MIT License - see LICENSE file for details
 ## Support
 
 - Documentation: [docs.concave.ai](https://docs.concave.ai)
-- Issues: [GitHub Issues](https://github.com/concave/concave-sandbox/issues)
+- Issues: [GitHub Issues](https://github.com/ConcaveAI/concave-sandbox/issues)
 - Email: support@concave.ai
 
 ## Contributing
