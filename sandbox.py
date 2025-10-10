@@ -224,27 +224,27 @@ class Sandbox:
 
         Args:
             name: Human-readable name for the sandbox
-            base_url: Base URL of the sandbox service (defaults to SANDBOX_BASE_URL env var or https://api.concave.dev)
-            api_key: API key for authentication (defaults to CONCAVE_API_KEY env var)
+            base_url: Base URL of the sandbox service (defaults to CONCAVE_SANDBOX_BASE_URL env var or https://api.concave.dev)
+            api_key: API key for authentication (defaults to CONCAVE_SANDBOX_API_KEY env var)
 
         Returns:
             A new Sandbox instance ready for code execution
 
         Raises:
             SandboxCreationError: If sandbox creation fails
-            ValueError: If api_key is not provided and CONCAVE_API_KEY is not set
+            ValueError: If api_key is not provided and CONCAVE_SANDBOX_API_KEY is not set
 
         Example:
             sbx = Sandbox.create(name="my-test-sandbox", api_key="cnc_abc123...")
         """
         if base_url is None:
-            base_url = os.getenv("SANDBOX_BASE_URL", "https://api.concave.dev")
+            base_url = os.getenv("CONCAVE_SANDBOX_BASE_URL", "https://api.concave.dev")
 
         if api_key is None:
-            api_key = os.getenv("CONCAVE_API_KEY")
+            api_key = os.getenv("CONCAVE_SANDBOX_API_KEY")
             if not api_key:
                 raise ValueError(
-                    "api_key must be provided or CONCAVE_API_KEY environment variable must be set"
+                    "api_key must be provided or CONCAVE_SANDBOX_API_KEY environment variable must be set"
                 )
 
         # Create HTTP client for the creation request
@@ -587,15 +587,15 @@ def sandbox(name: str = "sandbox", base_url: Optional[str] = None, api_key: Opti
 
     Args:
         name: Human-readable name for the sandbox (default: "sandbox")
-        base_url: Base URL of the sandbox service (defaults to SANDBOX_BASE_URL env var or https://api.concave.dev)
-        api_key: API key for authentication (defaults to CONCAVE_API_KEY env var)
+        base_url: Base URL of the sandbox service (defaults to CONCAVE_SANDBOX_BASE_URL env var or https://api.concave.dev)
+        api_key: API key for authentication (defaults to CONCAVE_SANDBOX_API_KEY env var)
 
     Yields:
         Sandbox: A sandbox instance ready for code execution
 
     Raises:
         SandboxCreationError: If sandbox creation fails
-        ValueError: If api_key is not provided and CONCAVE_API_KEY env var is not set
+        ValueError: If api_key is not provided and CONCAVE_SANDBOX_API_KEY env var is not set
 
     Example:
         ```python
