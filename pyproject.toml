@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "concave-ai"
+version = "0.1.0"
+description = "Python SDK for the Concave sandbox service - isolated code execution environments"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Concave", email = "support@concave.ai"}
+]
+maintainers = [
+    {name = "Concave", email = "support@concave.ai"}
+]
+keywords = ["sandbox", "code-execution", "firecracker", "isolation", "security", "concave"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Emulators",
+    "Topic :: Security",
+]
+dependencies = [
+    "httpx>=0.25.0",
+]
+
+[project.urls]
+Homepage = "https://concave.ai"
+Documentation = "https://docs.concave.ai"
+Repository = "https://github.com/concave/concave-sandbox"
+Issues = "https://github.com/concave/concave-sandbox/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
+exclude = ["tests*", "__pycache__"]
+
+[tool.setuptools.package-data]
+"*" = ["py.typed"]
+

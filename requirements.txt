@@ -1,0 +1,4 @@
+# Concave SDK Dependencies
+# 
+# HTTP client library for making requests to the sandbox service
+httpx>=0.25.0
