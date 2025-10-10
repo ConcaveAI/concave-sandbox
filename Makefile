@@ -23,7 +23,7 @@ clean:
 
 build: clean
 	@echo "Building package..."
-	python -m build
+	pyproject-build
 	@echo "✓ Build complete"
 	@echo ""
 	@echo "Generated files:"
@@ -31,7 +31,7 @@ build: clean
 
 test-publish: build
 	@echo "Publishing to TestPyPI..."
-	python -m twine upload --repository testpypi dist/*
+	twine upload --repository testpypi dist/*
 	@echo ""
 	@echo "✓ Published to TestPyPI"
 	@echo "Test installation with:"
@@ -42,7 +42,7 @@ publish: build
 	@read -p "Are you sure you want to publish to PyPI? [y/N] " -n 1 -r; \
 	echo; \
 	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
-		python -m twine upload dist/*; \
+		twine upload dist/*; \
 		echo ""; \
 		echo "✓ Published to PyPI"; \
 		echo "Install with: pip install concave-sandbox"; \
