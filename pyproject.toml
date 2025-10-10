@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "concave-sandbox"
-version = "0.1.0"
+version = "0.1.2"
 description = "Python SDK for the Concave sandbox service - isolated code execution environments"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -41,7 +41,7 @@ Issues = "https://github.com/ConcaveAI/concave-sandbox/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["*"]
+include = ["concave*"]
 exclude = ["tests*", "__pycache__"]
 
 [tool.setuptools.package-data]
