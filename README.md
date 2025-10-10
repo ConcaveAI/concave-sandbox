@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/cover.png" alt="Concave Sandbox Banner" width="100%">
+  <img src="https://raw.githubusercontent.com/ConcaveAI/concave-sandbox/refs/heads/main/assets/cover.png" alt="Concave Sandbox Banner" width="100%">
 </p>
 
 ## What's this?
