@@ -65,6 +65,29 @@ print(result.stdout)  # Hello from Python!
 sbx.delete()
 ```
 
+### List Active Sandboxes
+
+View and manage all your active sandboxes:
+
+```python
+from concave import Sandbox
+
+# List all active sandboxes
+sandboxes = Sandbox.list(api_key="api_key_here")
+print(f"Found {len(sandboxes)} active sandboxes")
+
+# List only the 10 most recent sandboxes
+recent = Sandbox.list(limit=10, api_key="api_key_here")
+for sbx in recent:
+    print(f"Sandbox {sbx.sandbox_id}")
+    uptime = sbx.uptime()
+    print(f"  Uptime: {uptime:.1f}s")
+
+# Clean up all sandboxes
+for sbx in Sandbox.list(api_key="api_key_here"):
+    sbx.delete()
+```
+
 ## Documentation
 
 For complete API reference, advanced examples, error handling, and best practices, visit [docs.concave.ai](https://docs.concave.ai).

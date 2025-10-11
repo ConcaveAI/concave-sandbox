@@ -189,6 +189,89 @@ class Sandbox:
     error handling, and response parsing to provide a clean Python interface.
     """
 
+    @staticmethod
+    def _get_credentials(
+        base_url: Optional[str] = None, api_key: Optional[str] = None
+    ) -> tuple[str, str]:
+        """
+        Get base_url and api_key from arguments or environment variables.
+
+        Args:
+            base_url: Optional base URL
+            api_key: Optional API key
+
+        Returns:
+            Tuple of (base_url, api_key)
+
+        Raises:
+            ValueError: If api_key is not provided and CONCAVE_SANDBOX_API_KEY is not set
+        """
+        if base_url is None:
+            base_url = os.getenv("CONCAVE_SANDBOX_BASE_URL", "https://api.concave.dev")
+
+        if api_key is None:
+            api_key = os.getenv("CONCAVE_SANDBOX_API_KEY")
+            if not api_key:
+                raise ValueError(
+                    "api_key must be provided or CONCAVE_SANDBOX_API_KEY environment variable must be set"
+                )
+
+        return base_url, api_key
+
+    @staticmethod
+    def _create_http_client(api_key: str, timeout: float = 30.0) -> httpx.Client:
+        """
+        Create an HTTP client with proper headers.
+
+        Args:
+            api_key: API key for authentication
+            timeout: Request timeout in seconds
+
+        Returns:
+            Configured httpx.Client
+        """
+        headers = {
+            "User-Agent": f"concave-sandbox/{__version__}",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+        return httpx.Client(timeout=httpx.Timeout(timeout), headers=headers)
+
+    @staticmethod
+    def _handle_http_error(e: httpx.HTTPStatusError, operation: str = "operation") -> None:
+        """
+        Handle HTTP status errors and raise appropriate exceptions.
+
+        Args:
+            e: The HTTP status error
+            operation: Description of the operation that failed
+
+        Raises:
+            Appropriate SandboxError subclass based on status code
+        """
+        status_code = e.response.status_code
+        error_msg = f"HTTP {status_code}"
+        try:
+            error_data = e.response.json()
+            if "error" in error_data:
+                error_msg += f": {error_data['error']}"
+        except Exception:
+            error_msg += f": {e.response.text}"
+
+        # Raise specific exceptions based on status code
+        if status_code == 401 or status_code == 403:
+            raise SandboxAuthenticationError(f"Authentication failed: {error_msg}") from e
+        elif status_code == 404:
+            raise SandboxNotFoundError(f"Not found: {error_msg}") from e
+        elif status_code == 429:
+            raise SandboxRateLimitError(f"Rate limit exceeded: {error_msg}") from e
+        elif status_code == 500:
+            raise SandboxInternalError(f"Server error: {error_msg}") from e
+        elif status_code == 502 or status_code == 503:
+            raise SandboxUnavailableError(f"Service unavailable: {error_msg}", status_code) from e
+        else:
+            raise SandboxError(f"Failed to {operation}: {error_msg}") from e
+
     def __init__(self, sandbox_id: str, name: str, base_url: str, api_key: Optional[str] = None):
         """
         Initialize a Sandbox instance.
@@ -243,24 +326,11 @@ class Sandbox:
             sbx = Sandbox.create(name="my-test-sandbox", api_key="cnc_abc123...")
             sbx_no_internet = Sandbox.create(name="isolated-sandbox", api_key="cnc_abc123...", internet_access=False)
         """
-        if base_url is None:
-            base_url = os.getenv("CONCAVE_SANDBOX_BASE_URL", "https://api.concave.dev")
+        # Get credentials using helper method
+        base_url, api_key = cls._get_credentials(base_url, api_key)
 
-        if api_key is None:
-            api_key = os.getenv("CONCAVE_SANDBOX_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "api_key must be provided or CONCAVE_SANDBOX_API_KEY environment variable must be set"
-                )
-
-        # Create HTTP client for the creation request
-        headers = {
-            "User-Agent": f"concave-sandbox/{__version__}",
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        }
-
-        client = httpx.Client(timeout=httpx.Timeout(30.0), headers=headers)
+        # Create HTTP client using helper method
+        client = cls._create_http_client(api_key)
 
         try:
             # Make creation request to the sandbox service
@@ -279,32 +349,113 @@ class Sandbox:
             return cls(sandbox_id, name, base_url, api_key)
 
         except httpx.HTTPStatusError as e:
-            status_code = e.response.status_code
-            error_msg = f"HTTP {status_code}"
-            try:
-                error_data = e.response.json()
-                if "error" in error_data:
-                    error_msg += f": {error_data['error']}"
-            except Exception:
-                error_msg += f": {e.response.text}"
-
-            # Raise specific exceptions based on status code
-            if status_code == 401 or status_code == 403:
-                raise SandboxAuthenticationError(f"Authentication failed: {error_msg}") from e
-            elif status_code == 429:
-                raise SandboxRateLimitError(f"Rate limit exceeded: {error_msg}") from e
-            elif status_code == 500:
-                raise SandboxInternalError(f"Server error: {error_msg}") from e
-            elif status_code == 502 or status_code == 503:
-                raise SandboxUnavailableError(
-                    f"Service unavailable: {error_msg}", status_code
-                ) from e
-            else:
-                raise SandboxCreationError(f"Failed to create sandbox: {error_msg}") from e
+            cls._handle_http_error(e, "create sandbox")
 
         except httpx.TimeoutException as e:
             raise SandboxTimeoutError(
                 "Sandbox creation timed out", timeout_ms=30000, operation="create"
+            ) from e
+        except httpx.RequestError as e:
+            raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
+        finally:
+            client.close()
+
+    @classmethod
+    def list(
+        cls,
+        limit: Optional[int] = None,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ) -> list["Sandbox"]:
+        """
+        List all active sandboxes for the authenticated user.
+
+        Returns sandboxes sorted by creation time (newest first).
+
+        Args:
+            limit: Maximum number of sandboxes to return (default: None = all)
+            base_url: Base URL of the sandbox service (defaults to CONCAVE_SANDBOX_BASE_URL env var or https://api.concave.dev)
+            api_key: API key for authentication (defaults to CONCAVE_SANDBOX_API_KEY env var)
+
+        Returns:
+            List of Sandbox instances representing active sandboxes, sorted by newest first
+
+        Raises:
+            SandboxAuthenticationError: If authentication fails
+            ValueError: If api_key is not provided and CONCAVE_SANDBOX_API_KEY is not set
+
+        Example:
+            # List all sandboxes
+            sandboxes = Sandbox.list()
+            print(f"Found {len(sandboxes)} active sandboxes")
+
+            # List only 10 most recent sandboxes
+            recent = Sandbox.list(limit=10)
+            for sbx in recent:
+                print(f"Sandbox {sbx.sandbox_id}: uptime={sbx.uptime():.1f}s")
+
+            # List and clean up all
+            for sbx in Sandbox.list():
+                sbx.delete()
+        """
+        # Get credentials using helper method
+        base_url, api_key = cls._get_credentials(base_url, api_key)
+
+        # Create HTTP client using helper method
+        client = cls._create_http_client(api_key)
+
+        try:
+            # Make request to list sandboxes
+            base = base_url.rstrip("/")
+            response = client.get(f"{base}/api/v1/sandboxes")
+            response.raise_for_status()
+            data = response.json()
+
+            # Parse response
+            sandboxes_data = data.get("sandboxes", [])
+
+            # Sort by started_at descending (newest first)
+            # Parse started_at as ISO timestamp string
+            from datetime import datetime
+
+            def parse_timestamp(sandbox_dict):
+                try:
+                    started_at_str = sandbox_dict.get("started_at", "")
+                    # Parse ISO 8601 timestamp (e.g., "2024-10-11T12:34:56.789Z")
+                    return datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    # If parsing fails, return epoch (oldest)
+                    return datetime.fromtimestamp(0)
+
+            sorted_sandboxes = sorted(sandboxes_data, key=parse_timestamp, reverse=True)
+
+            # Apply limit if specified
+            if limit is not None and limit > 0:
+                sorted_sandboxes = sorted_sandboxes[:limit]
+
+            # Create Sandbox instances for each sandbox
+            sandbox_instances = []
+            for sandbox_dict in sorted_sandboxes:
+                sandbox_id = sandbox_dict.get("id")
+                if sandbox_id:
+                    # Create a Sandbox instance with minimal info
+                    # We don't have a "name" from the API, so use ID as name
+                    sandbox = cls(
+                        sandbox_id=sandbox_id,
+                        name=sandbox_id,  # Use ID as name since API doesn't provide one
+                        base_url=base_url,
+                        api_key=api_key,
+                    )
+                    sandbox_instances.append(sandbox)
+
+            return sandbox_instances
+
+        except httpx.HTTPStatusError as e:
+            cls._handle_http_error(e, "list sandboxes")
+
+        except httpx.TimeoutException as e:
+            raise SandboxTimeoutError(
+                "List sandboxes request timed out", timeout_ms=30000, operation="list"
             ) from e
         except httpx.RequestError as e:
             raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
@@ -368,28 +519,7 @@ class Sandbox:
             )
 
         except httpx.HTTPStatusError as e:
-            status_code = e.response.status_code
-            if status_code == 404:
-                raise SandboxNotFoundError(f"Sandbox {self.sandbox_id} not found") from e
-            elif status_code == 401 or status_code == 403:
-                raise SandboxAuthenticationError("Authentication failed") from e
-            elif status_code == 429:
-                raise SandboxRateLimitError("Rate limit exceeded") from e
-            elif status_code == 500:
-                raise SandboxInternalError("Server error during command execution") from e
-            elif status_code == 502 or status_code == 503:
-                raise SandboxUnavailableError(
-                    f"Sandbox {self.sandbox_id} is not ready or unreachable", status_code
-                ) from e
-            else:
-                error_msg = f"HTTP {status_code}"
-                try:
-                    error_data = e.response.json()
-                    if "error" in error_data:
-                        error_msg += f": {error_data['error']}"
-                except Exception:
-                    error_msg += f": {e.response.text}"
-                raise SandboxExecutionError(f"Failed to execute command: {error_msg}") from e
+            self._handle_http_error(e, "execute command")
 
         except httpx.TimeoutException as e:
             timeout_val = timeout if timeout else 10000
@@ -465,28 +595,7 @@ class Sandbox:
             )
 
         except httpx.HTTPStatusError as e:
-            status_code = e.response.status_code
-            if status_code == 404:
-                raise SandboxNotFoundError(f"Sandbox {self.sandbox_id} not found") from e
-            elif status_code == 401 or status_code == 403:
-                raise SandboxAuthenticationError("Authentication failed") from e
-            elif status_code == 429:
-                raise SandboxRateLimitError("Rate limit exceeded") from e
-            elif status_code == 500:
-                raise SandboxInternalError(f"Server error during code execution") from e
-            elif status_code == 502 or status_code == 503:
-                raise SandboxUnavailableError(
-                    f"Sandbox {self.sandbox_id} is not ready or unreachable", status_code
-                ) from e
-            else:
-                error_msg = f"HTTP {status_code}"
-                try:
-                    error_data = e.response.json()
-                    if "error" in error_data:
-                        error_msg += f": {error_data['error']}"
-                except Exception:
-                    error_msg += f": {e.response.text}"
-                raise SandboxExecutionError(f"Failed to run code: {error_msg}") from e
+            self._handle_http_error(e, "run code")
 
         except httpx.TimeoutException as e:
             timeout_val = timeout if timeout else 10000
@@ -606,24 +715,7 @@ class Sandbox:
             return float(data["uptime"])
 
         except httpx.HTTPStatusError as e:
-            status_code = e.response.status_code
-            if status_code == 404:
-                raise SandboxNotFoundError(f"Sandbox {self.sandbox_id} not found") from e
-            elif status_code == 401 or status_code == 403:
-                raise SandboxAuthenticationError("Authentication failed") from e
-            elif status_code == 502 or status_code == 503:
-                raise SandboxUnavailableError(
-                    f"Sandbox {self.sandbox_id} is not ready or unreachable", status_code
-                ) from e
-            else:
-                error_msg = f"HTTP {status_code}"
-                try:
-                    error_data = e.response.json()
-                    if "error" in error_data:
-                        error_msg += f": {error_data['error']}"
-                except Exception:
-                    error_msg += f": {e.response.text}"
-                raise SandboxExecutionError(f"Failed to get uptime: {error_msg}") from e
+            self._handle_http_error(e, "get uptime")
 
         except httpx.TimeoutException as e:
             raise SandboxTimeoutError(
@@ -641,12 +733,12 @@ class Sandbox:
         Returns:
             Dictionary containing sandbox status information including:
             - id: Sandbox identifier
+            - user_id: User who owns the sandbox
             - ip: Sandbox IP address
-            - pid: Sandbox process ID
-            - state: Current sandbox state
+            - state: Current sandbox state (running, stopped, error)
             - started_at: Sandbox start timestamp
             - exec_count: Number of commands executed
-            - guest_health: Health status of the guest sandbox runtime
+            - internet_access: Whether internet access is enabled
 
         Raises:
             SandboxNotFoundError: If the sandbox is not found
@@ -656,6 +748,7 @@ class Sandbox:
             status = sbx.status()
             print(f"Sandbox State: {status['state']}")
             print(f"Commands executed: {status['exec_count']}")
+            print(f"IP address: {status['ip']}")
         """
         try:
             response = self._client.get(f"{self._sandboxes_url}/{self.sandbox_id}")
@@ -663,24 +756,7 @@ class Sandbox:
             return response.json()
 
         except httpx.HTTPStatusError as e:
-            status_code = e.response.status_code
-            if status_code == 404:
-                raise SandboxNotFoundError(f"Sandbox {self.sandbox_id} not found") from e
-            elif status_code == 401 or status_code == 403:
-                raise SandboxAuthenticationError("Authentication failed") from e
-            elif status_code == 500:
-                raise SandboxInternalError("Server error while fetching status") from e
-            elif status_code == 502 or status_code == 503:
-                raise SandboxUnavailableError("Service unavailable", status_code) from e
-            else:
-                error_msg = f"HTTP {status_code}"
-                try:
-                    error_data = e.response.json()
-                    if "error" in error_data:
-                        error_msg += f": {error_data['error']}"
-                except Exception:
-                    error_msg += f": {e.response.text}"
-                raise SandboxExecutionError(f"Failed to get status: {error_msg}") from e
+            self._handle_http_error(e, "get status")
 
         except httpx.TimeoutException as e:
             raise SandboxTimeoutError(
