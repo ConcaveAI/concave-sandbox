@@ -45,7 +45,7 @@ class RunResult:
         stderr: Standard error from the code execution
         returncode: Exit code from the code execution (0 = success)
         code: The original code that was executed
-        language: The language that was executed (python or nodejs)
+        language: The language that was executed (currently only python)
     """
 
     stdout: str
@@ -404,7 +404,7 @@ class Sandbox:
         Args:
             code: Code to execute
             timeout: Timeout in milliseconds (default: 10000ms)
-            language: Programming language to use (default: "python"). Supported: "python", "nodejs"
+            language: Programming language to use (default: "python"). Currently only Python is supported.
 
         Returns:
             RunResult containing stdout, stderr, return code, original code, and language
@@ -416,18 +416,18 @@ class Sandbox:
 
         Example:
             # Run Python code
+            result = sbx.run("print('Hello, World!')")
+            print(result.stdout)  # Hello, World!
+            
+            # Run Python with timeout
             result = sbx.run("import time; time.sleep(1)", timeout=3000)
-            print(result.stdout)
-
-            # Run Node.js code
-            result = sbx.run("console.log('Hello from Node.js')", language="nodejs")
             print(result.stdout)
         """
         if not code.strip():
             raise SandboxValidationError("Code cannot be empty")
 
-        if language not in ["python", "nodejs"]:
-            raise SandboxValidationError(f"Unsupported language: {language}. Supported: python, nodejs")
+        if language != "python":
+            raise SandboxValidationError(f"Unsupported language: {language}. Currently only 'python' is supported.")
 
         # Prepare request payload
         request_data = {"code": code, "language": language}
@@ -471,7 +471,7 @@ class Sandbox:
             elif status_code == 429:
                 raise SandboxRateLimitError("Rate limit exceeded") from e
             elif status_code == 500:
-                raise SandboxInternalError(f"Server error during {language} execution") from e
+                raise SandboxInternalError(f"Server error during code execution") from e
             elif status_code == 502 or status_code == 503:
                 raise SandboxUnavailableError(
                     f"Sandbox {self.sandbox_id} is not ready or unreachable", status_code
@@ -484,12 +484,12 @@ class Sandbox:
                         error_msg += f": {error_data['error']}"
                 except Exception:
                     error_msg += f": {e.response.text}"
-                raise SandboxExecutionError(f"Failed to run {language} code: {error_msg}") from e
+                raise SandboxExecutionError(f"Failed to run code: {error_msg}") from e
 
         except httpx.TimeoutException as e:
             timeout_val = timeout if timeout else 10000
             raise SandboxTimeoutError(
-                f"{language.capitalize()} execution timed out", timeout_ms=timeout_val, operation="run"
+                f"Code execution timed out", timeout_ms=timeout_val, operation="run"
             ) from e
         except httpx.RequestError as e:
             raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
