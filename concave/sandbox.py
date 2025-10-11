@@ -14,6 +14,8 @@ from typing import Any, Dict, Optional
 
 import httpx
 
+from . import __version__
+
 
 @dataclass
 class ExecuteResult:
@@ -211,7 +213,7 @@ class Sandbox:
         self._sandboxes_url = f"{self.api_base}/sandboxes"
 
         # HTTP client configuration
-        headers = {"User-Agent": "concave-sandbox/0.1.41", "Content-Type": "application/json"}
+        headers = {"User-Agent": f"concave-sandbox/{__version__}", "Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
@@ -251,7 +253,7 @@ class Sandbox:
 
         # Create HTTP client for the creation request
         headers = {
-            "User-Agent": "concave-sandbox/0.1.41",
+            "User-Agent": f"concave-sandbox/{__version__}",
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
         }
@@ -519,6 +521,116 @@ class Sandbox:
         except (httpx.HTTPStatusError, httpx.RequestError):
             # Log the error but don't raise - deletion might have already occurred
             return False
+
+    def ping(self) -> bool:
+        """
+        Ping the sandbox to check if it is responsive.
+
+        Returns:
+            True if sandbox is responsive, False otherwise
+
+        Raises:
+            SandboxNotFoundError: If the sandbox is not found
+            SandboxAuthenticationError: If authentication fails
+            SandboxTimeoutError: If the ping request times out
+
+        Example:
+            if sbx.ping():
+                print("Sandbox is alive!")
+            else:
+                print("Sandbox is not responding")
+        """
+        try:
+            response = self._client.get(
+                f"{self._sandboxes_url}/{self.sandbox_id}/ping",
+                timeout=5.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            return data.get("status") == "ok"
+
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code
+            if status_code == 404:
+                raise SandboxNotFoundError(f"Sandbox {self.sandbox_id} not found") from e
+            elif status_code == 401 or status_code == 403:
+                raise SandboxAuthenticationError("Authentication failed") from e
+            elif status_code == 502 or status_code == 503:
+                raise SandboxUnavailableError(
+                    f"Sandbox {self.sandbox_id} is not ready or unreachable", status_code
+                ) from e
+            else:
+                # For other errors, return False instead of raising
+                return False
+
+        except httpx.TimeoutException as e:
+            raise SandboxTimeoutError("Ping timed out", timeout_ms=5000, operation="ping") from e
+        except httpx.RequestError:
+            # Network errors -> sandbox is not reachable
+            return False
+
+    def uptime(self) -> float:
+        """
+        Get the uptime of the sandbox in seconds.
+
+        Returns:
+            Sandbox uptime in seconds as a float
+
+        Raises:
+            SandboxNotFoundError: If the sandbox is not found
+            SandboxAuthenticationError: If authentication fails
+            SandboxUnavailableError: If the sandbox is unavailable
+            SandboxTimeoutError: If the uptime request times out
+            SandboxExecutionError: If the uptime request fails
+
+        Example:
+            uptime_seconds = sbx.uptime()
+            print(f"Sandbox has been running for {uptime_seconds:.2f} seconds")
+        """
+        try:
+            response = self._client.get(
+                f"{self._sandboxes_url}/{self.sandbox_id}/uptime",
+                timeout=5.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if "uptime" not in data:
+                raise SandboxInvalidResponseError(
+                    f"Invalid uptime response: missing 'uptime' field"
+                )
+
+            return float(data["uptime"])
+
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code
+            if status_code == 404:
+                raise SandboxNotFoundError(f"Sandbox {self.sandbox_id} not found") from e
+            elif status_code == 401 or status_code == 403:
+                raise SandboxAuthenticationError("Authentication failed") from e
+            elif status_code == 502 or status_code == 503:
+                raise SandboxUnavailableError(
+                    f"Sandbox {self.sandbox_id} is not ready or unreachable", status_code
+                ) from e
+            else:
+                error_msg = f"HTTP {status_code}"
+                try:
+                    error_data = e.response.json()
+                    if "error" in error_data:
+                        error_msg += f": {error_data['error']}"
+                except Exception:
+                    error_msg += f": {e.response.text}"
+                raise SandboxExecutionError(f"Failed to get uptime: {error_msg}") from e
+
+        except httpx.TimeoutException as e:
+            raise SandboxTimeoutError(
+                "Uptime request timed out", timeout_ms=5000, operation="uptime"
+            ) from e
+        except httpx.RequestError as e:
+            raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
+        except (ValueError, TypeError) as e:
+            raise SandboxInvalidResponseError(f"Invalid uptime value in response: {e}") from e
 
     def status(self) -> Dict[str, Any]:
         """

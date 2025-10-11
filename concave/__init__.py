@@ -32,6 +32,8 @@ Example usage (context manager way):
     # Sandbox is automatically deleted after the with block
 """
 
+__version__ = "0.1.42"
+
 from .sandbox import (
     ExecuteResult,
     RunResult,
@@ -60,7 +62,6 @@ from .sandbox import (
     sandbox,
 )
 
-__version__ = "0.1.41"
 __all__ = [
     "Sandbox",
     "ExecuteResult",
