@@ -221,7 +221,7 @@ class Sandbox:
 
     @classmethod
     def create(
-        cls, name: str, base_url: Optional[str] = None, api_key: Optional[str] = None
+        cls, name: str, base_url: Optional[str] = None, api_key: Optional[str] = None, internet_access: bool = True
     ) -> "Sandbox":
         """
         Create a new sandbox instance.
@@ -230,6 +230,7 @@ class Sandbox:
             name: Human-readable name for the sandbox
             base_url: Base URL of the sandbox service (defaults to CONCAVE_SANDBOX_BASE_URL env var or https://api.concave.dev)
             api_key: API key for authentication (defaults to CONCAVE_SANDBOX_API_KEY env var)
+            internet_access: Enable internet access for the sandbox (default: True)
 
         Returns:
             A new Sandbox instance ready for code execution
@@ -240,6 +241,7 @@ class Sandbox:
 
         Example:
             sbx = Sandbox.create(name="my-test-sandbox", api_key="cnc_abc123...")
+            sbx_no_internet = Sandbox.create(name="isolated-sandbox", api_key="cnc_abc123...", internet_access=False)
         """
         if base_url is None:
             base_url = os.getenv("CONCAVE_SANDBOX_BASE_URL", "https://api.concave.dev")
@@ -263,7 +265,7 @@ class Sandbox:
         try:
             # Make creation request to the sandbox service
             base = base_url.rstrip("/")
-            response = client.put(f"{base}/api/v1/sandboxes")
+            response = client.put(f"{base}/api/v1/sandboxes", json={"internet_access": internet_access})
             response.raise_for_status()
             sandbox_data = response.json()
 
@@ -702,7 +704,7 @@ class Sandbox:
 
 
 @contextmanager
-def sandbox(name: str = "sandbox", base_url: Optional[str] = None, api_key: Optional[str] = None):
+def sandbox(name: str = "sandbox", base_url: Optional[str] = None, api_key: Optional[str] = None, internet_access: bool = True):
     """
     Context manager for creating and automatically cleaning up a sandbox.
 
@@ -713,6 +715,7 @@ def sandbox(name: str = "sandbox", base_url: Optional[str] = None, api_key: Opti
         name: Human-readable name for the sandbox (default: "sandbox")
         base_url: Base URL of the sandbox service (defaults to CONCAVE_SANDBOX_BASE_URL env var or https://api.concave.dev)
         api_key: API key for authentication (defaults to CONCAVE_SANDBOX_API_KEY env var)
+        internet_access: Enable internet access for the sandbox (default: True)
 
     Yields:
         Sandbox: A sandbox instance ready for code execution
@@ -729,9 +732,14 @@ def sandbox(name: str = "sandbox", base_url: Optional[str] = None, api_key: Opti
             result = s.run("print('Hello from Concave!')")
             print(result.stdout)
         # Sandbox is automatically deleted after the with block
+        
+        # Create sandbox without internet access
+        with sandbox(name="isolated", internet_access=False) as s:
+            result = s.run("print('No internet here!')")
+            print(result.stdout)
         ```
     """
-    sbx = Sandbox.create(name=name, base_url=base_url, api_key=api_key)
+    sbx = Sandbox.create(name=name, base_url=base_url, api_key=api_key, internet_access=internet_access)
     try:
         yield sbx
     finally:
