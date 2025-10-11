@@ -10,10 +10,10 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = "MIT"
 authors = [
-    {name = "Concave", email = "support@concave.ai"}
+    {name = "Concave"}
 ]
 maintainers = [
-    {name = "Concave", email = "support@concave.ai"}
+    {name = "Concave"}
 ]
 keywords = ["sandbox", "code-execution", "firecracker", "isolation", "security", "concave"]
 classifiers = [
