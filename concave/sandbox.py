@@ -261,7 +261,7 @@ class Sandbox:
         try:
             # Make creation request to the sandbox service
             base = base_url.rstrip("/")
-            response = client.post(f"{base}/api/v1/sandboxes")
+            response = client.put(f"{base}/api/v1/sandboxes")
             response.raise_for_status()
             sandbox_data = response.json()
 
