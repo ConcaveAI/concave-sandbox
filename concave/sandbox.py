@@ -412,7 +412,7 @@ class Sandbox:
             data = response.json()
 
             # Parse response
-            sandboxes_data = data.get("sandboxes", [])
+            sandboxes_data = data.get("sandboxes") or []
 
             # Sort by started_at descending (newest first)
             # Parse started_at as ISO timestamp string
