@@ -60,7 +60,7 @@ from .sandbox import (
     sandbox,
 )
 
-__version__ = "0.1.4"
+__version__ = "0.1.41"
 __all__ = [
     "Sandbox",
     "ExecuteResult",
