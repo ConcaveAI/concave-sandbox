@@ -32,7 +32,7 @@ Example usage (context manager way):
     # Sandbox is automatically deleted after the with block
 """
 
-__version__ = "0.1.44"
+__version__ = "0.1.45"
 
 from .sandbox import (
     ExecuteResult,
@@ -48,6 +48,10 @@ from .sandbox import (
     # Base exceptions
     SandboxError,
     SandboxExecutionError,
+    # File operation errors
+    SandboxFileError,
+    SandboxFileNotFoundError,
+    SandboxFileSizeError,
     SandboxInternalError,
     # Response errors
     SandboxInvalidResponseError,
@@ -83,6 +87,10 @@ __all__ = [
     # Network errors
     "SandboxConnectionError",
     "SandboxTimeoutError",
+    # File operation errors
+    "SandboxFileError",
+    "SandboxFileNotFoundError",
+    "SandboxFileSizeError",
     # Legacy errors
     "SandboxCreationError",
     "SandboxExecutionError",

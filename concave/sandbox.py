@@ -176,6 +176,43 @@ class SandboxInvalidResponseError(SandboxError):
     pass
 
 
+# File Operation Errors
+class SandboxFileError(SandboxError):
+    """Base exception for file operation failures."""
+
+    pass
+
+
+class SandboxFileSizeError(SandboxFileError):
+    """
+    Raised when file exceeds size limits.
+
+    Attributes:
+        max_size: Maximum allowed file size in bytes
+        actual_size: Actual file size in bytes
+    """
+
+    def __init__(self, message: str, max_size: int, actual_size: int):
+        super().__init__(message)
+        self.max_size = max_size
+        self.actual_size = actual_size
+
+
+class SandboxFileNotFoundError(SandboxFileError):
+    """
+    Raised when a file is not found (local or remote).
+
+    Attributes:
+        path: Path to the file that was not found
+        is_local: True if local file, False if remote file
+    """
+
+    def __init__(self, message: str, path: str, is_local: bool = True):
+        super().__init__(message)
+        self.path = path
+        self.is_local = is_local
+
+
 class Sandbox:
     """
     Main interface for interacting with the Concave sandbox service.
@@ -761,6 +798,181 @@ class Sandbox:
         except httpx.TimeoutException as e:
             raise SandboxTimeoutError(
                 "Status check timed out", timeout_ms=5000, operation="status"
+            ) from e
+        except httpx.RequestError as e:
+            raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
+
+    def upload_file(self, local_path: str, remote_path: str) -> bool:
+        """
+        Upload a file from local filesystem to the sandbox.
+
+        Args:
+            local_path: Path to the local file to upload
+            remote_path: Absolute path in the sandbox where file should be stored (must start with /)
+
+        Returns:
+            True if upload was successful
+
+        Raises:
+            SandboxFileNotFoundError: If local file doesn't exist
+            SandboxFileSizeError: If file exceeds 4MB limit
+            SandboxValidationError: If remote_path is not absolute
+            SandboxNotFoundError: If sandbox is not found
+            SandboxTimeoutError: If upload times out
+            SandboxFileError: If upload fails for other reasons
+
+        Example:
+            # Upload a Python script
+            sbx.upload_file("./script.py", "/tmp/script.py")
+            
+            # Upload a data file
+            sbx.upload_file("./data.json", "/home/user/data.json")
+
+        Note:
+            TODO: Temporary 4MB limit. Future versions will support streaming for larger files.
+        """
+        import base64
+
+        # Validate local file exists
+        if not os.path.exists(local_path):
+            raise SandboxFileNotFoundError(
+                f"Local file not found: {local_path}", path=local_path, is_local=True
+            )
+
+        # Validate remote path is absolute
+        if not remote_path.startswith("/"):
+            raise SandboxValidationError("Remote path must be absolute (start with /)")
+
+        # Check file size
+        # TODO: Temporary 4MB limit. Future versions will support streaming for larger files.
+        file_size = os.path.getsize(local_path)
+        max_size = 4 * 1024 * 1024  # 4MB
+        if file_size > max_size:
+            raise SandboxFileSizeError(
+                f"File size ({file_size} bytes) exceeds maximum allowed size ({max_size} bytes). "
+                "TODO: Future versions will support streaming for larger files.",
+                max_size=max_size,
+                actual_size=file_size,
+            )
+
+        # Read and encode file
+        try:
+            with open(local_path, "rb") as f:
+                content_bytes = f.read()
+            content_b64 = base64.b64encode(content_bytes).decode("utf-8")
+        except IOError as e:
+            raise SandboxFileError(f"Failed to read local file: {e}") from e
+
+        # Upload file
+        payload = {"path": remote_path, "content": content_b64}
+
+        try:
+            response = self._client.put(
+                f"{self._sandboxes_url}/{self.sandbox_id}/files",
+                json=payload,
+                timeout=35.0,  # Generous timeout for file operations
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Handle error responses
+            if "error" in data:
+                if "not found" in data["error"].lower():
+                    raise SandboxNotFoundError(f"Sandbox {self.sandbox_id} not found")
+                raise SandboxFileError(f"File upload failed: {data['error']}")
+
+            return data.get("success", False)
+
+        except httpx.HTTPStatusError as e:
+            self._handle_http_error(e, "upload file")
+
+        except httpx.TimeoutException as e:
+            raise SandboxTimeoutError(
+                "File upload timed out", timeout_ms=35000, operation="upload"
+            ) from e
+        except httpx.RequestError as e:
+            raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
+
+    def download_file(self, remote_path: str, local_path: str) -> bool:
+        """
+        Download a file from the sandbox to local filesystem.
+
+        Args:
+            remote_path: Absolute path in the sandbox to download from (must start with /)
+            local_path: Path on local filesystem where file should be saved
+
+        Returns:
+            True if download was successful
+
+        Raises:
+            SandboxFileNotFoundError: If remote file doesn't exist
+            SandboxValidationError: If remote_path is not absolute
+            SandboxNotFoundError: If sandbox is not found
+            SandboxTimeoutError: If download times out
+            SandboxFileError: If download fails for other reasons
+
+        Example:
+            # Download a result file
+            sbx.download_file("/tmp/output.txt", "./results/output.txt")
+            
+            # Download generated data
+            sbx.download_file("/home/user/data.csv", "./data.csv")
+
+        Note:
+            TODO: Temporary 4MB limit. Future versions will support streaming for larger files.
+        """
+        import base64
+
+        # Validate remote path is absolute
+        if not remote_path.startswith("/"):
+            raise SandboxValidationError("Remote path must be absolute (start with /)")
+
+        # Create parent directory if needed
+        local_dir = os.path.dirname(local_path)
+        if local_dir:
+            os.makedirs(local_dir, exist_ok=True)
+
+        # Download file
+        try:
+            response = self._client.get(
+                f"{self._sandboxes_url}/{self.sandbox_id}/files",
+                params={"path": remote_path},
+                timeout=35.0,  # Generous timeout for file operations
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Handle error responses
+            if "error" in data:
+                if "not found" in data["error"].lower():
+                    if "sandbox" in data["error"].lower():
+                        raise SandboxNotFoundError(f"Sandbox {self.sandbox_id} not found")
+                    else:
+                        raise SandboxFileNotFoundError(
+                            f"Remote file not found: {remote_path}",
+                            path=remote_path,
+                            is_local=False,
+                        )
+                raise SandboxFileError(f"File download failed: {data['error']}")
+
+            # Decode and write file
+            if "content" not in data:
+                raise SandboxInvalidResponseError("Response missing 'content' field")
+
+            try:
+                content_bytes = base64.b64decode(data["content"])
+                with open(local_path, "wb") as f:
+                    f.write(content_bytes)
+                return True
+            except (IOError, OSError) as e:
+                raise SandboxFileError(f"Failed to write local file: {e}") from e
+
+        except httpx.HTTPStatusError as e:
+            self._handle_http_error(e, "download file")
+
+        except httpx.TimeoutException as e:
+            raise SandboxTimeoutError(
+                "File download timed out", timeout_ms=35000, operation="download"
             ) from e
         except httpx.RequestError as e:
             raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
