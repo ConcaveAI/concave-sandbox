@@ -26,7 +26,13 @@ pip install concave-sandbox
 
 ## Quick Start
 
-### Get Your API Key
+### Configuration
+
+Set your API key as an environment variable:
+
+```bash
+export CONCAVE_SANDBOX_API_KEY="your_api_key_here"
+```
 
 Sign up at [concave.ai](https://concave.ai) to get your API key.
 
@@ -37,7 +43,7 @@ Execute Python code securely in isolated sandboxes:
 ```python
 from concave import sandbox
 
-with sandbox(name="python-sandbox", api_key="api_key_here") as sbx:
+with sandbox(name="python-sandbox") as sbx:
     result = sbx.run("print(668.5 * 2)")
     print(result.stdout) 
     
@@ -51,7 +57,7 @@ If you prefer to manage the sandbox lifecycle yourself:
 ```python
 from concave import Sandbox
 
-sbx = Sandbox.create(name="my-sandbox", api_key="api_key_here")
+sbx = Sandbox.create(name="my-sandbox")
 
 # Execute shell commands
 result = sbx.execute("uname -a")

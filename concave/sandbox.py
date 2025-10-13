@@ -341,15 +341,13 @@ class Sandbox:
 
     @classmethod
     def create(
-        cls, name: str, base_url: Optional[str] = None, api_key: Optional[str] = None, internet_access: bool = True
+        cls, name: str, internet_access: bool = True
     ) -> "Sandbox":
         """
         Create a new sandbox instance.
 
         Args:
             name: Human-readable name for the sandbox
-            base_url: Base URL of the sandbox service (defaults to CONCAVE_SANDBOX_BASE_URL env var or https://api.concave.dev)
-            api_key: API key for authentication (defaults to CONCAVE_SANDBOX_API_KEY env var)
             internet_access: Enable internet access for the sandbox (default: True)
 
         Returns:
@@ -357,14 +355,14 @@ class Sandbox:
 
         Raises:
             SandboxCreationError: If sandbox creation fails
-            ValueError: If api_key is not provided and CONCAVE_SANDBOX_API_KEY is not set
+            ValueError: If CONCAVE_SANDBOX_API_KEY environment variable is not set
 
         Example:
-            sbx = Sandbox.create(name="my-test-sandbox", api_key="cnc_abc123...")
-            sbx_no_internet = Sandbox.create(name="isolated-sandbox", api_key="cnc_abc123...", internet_access=False)
+            sbx = Sandbox.create(name="my-test-sandbox")
+            sbx_no_internet = Sandbox.create(name="isolated-sandbox", internet_access=False)
         """
         # Get credentials using helper method
-        base_url, api_key = cls._get_credentials(base_url, api_key)
+        base_url, api_key = cls._get_credentials(None, None)
 
         # Create HTTP client using helper method
         client = cls._create_http_client(api_key)
@@ -401,8 +399,6 @@ class Sandbox:
     def list(
         cls,
         limit: Optional[int] = None,
-        base_url: Optional[str] = None,
-        api_key: Optional[str] = None,
     ) -> list["Sandbox"]:
         """
         List all active sandboxes for the authenticated user.
@@ -411,15 +407,13 @@ class Sandbox:
 
         Args:
             limit: Maximum number of sandboxes to return (default: None = all)
-            base_url: Base URL of the sandbox service (defaults to CONCAVE_SANDBOX_BASE_URL env var or https://api.concave.dev)
-            api_key: API key for authentication (defaults to CONCAVE_SANDBOX_API_KEY env var)
 
         Returns:
             List of Sandbox instances representing active sandboxes, sorted by newest first
 
         Raises:
             SandboxAuthenticationError: If authentication fails
-            ValueError: If api_key is not provided and CONCAVE_SANDBOX_API_KEY is not set
+            ValueError: If CONCAVE_SANDBOX_API_KEY environment variable is not set
 
         Example:
             # List all sandboxes
@@ -436,7 +430,7 @@ class Sandbox:
                 sbx.delete()
         """
         # Get credentials using helper method
-        base_url, api_key = cls._get_credentials(base_url, api_key)
+        base_url, api_key = cls._get_credentials(None, None)
 
         # Create HTTP client using helper method
         client = cls._create_http_client(api_key)
@@ -992,7 +986,7 @@ class Sandbox:
 
 
 @contextmanager
-def sandbox(name: str = "sandbox", base_url: Optional[str] = None, api_key: Optional[str] = None, internet_access: bool = True):
+def sandbox(name: str = "sandbox", internet_access: bool = True):
     """
     Context manager for creating and automatically cleaning up a sandbox.
 
@@ -1001,8 +995,6 @@ def sandbox(name: str = "sandbox", base_url: Optional[str] = None, api_key: Opti
 
     Args:
         name: Human-readable name for the sandbox (default: "sandbox")
-        base_url: Base URL of the sandbox service (defaults to CONCAVE_SANDBOX_BASE_URL env var or https://api.concave.dev)
-        api_key: API key for authentication (defaults to CONCAVE_SANDBOX_API_KEY env var)
         internet_access: Enable internet access for the sandbox (default: True)
 
     Yields:
@@ -1010,7 +1002,7 @@ def sandbox(name: str = "sandbox", base_url: Optional[str] = None, api_key: Opti
 
     Raises:
         SandboxCreationError: If sandbox creation fails
-        ValueError: If api_key is not provided and CONCAVE_SANDBOX_API_KEY env var is not set
+        ValueError: If CONCAVE_SANDBOX_API_KEY environment variable is not set
 
     Example:
         ```python
@@ -1027,7 +1019,7 @@ def sandbox(name: str = "sandbox", base_url: Optional[str] = None, api_key: Opti
             print(result.stdout)
         ```
     """
-    sbx = Sandbox.create(name=name, base_url=base_url, api_key=api_key, internet_access=internet_access)
+    sbx = Sandbox.create(name=name, internet_access=internet_access)
     try:
         yield sbx
     finally:
