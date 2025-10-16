@@ -796,16 +796,17 @@ class Sandbox:
         except httpx.RequestError as e:
             raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
 
-    def upload_file(self, local_path: str, remote_path: str) -> bool:
+    def upload_file(self, local_path: str, remote_path: str, overwrite: bool = False) -> bool:
         """
         Upload a file from local filesystem to the sandbox.
 
         Args:
             local_path: Path to the local file to upload
             remote_path: Absolute path in the sandbox where file should be stored (must start with /)
+            overwrite: If False (default), returns False when remote file exists. If True, overwrites existing file.
 
         Returns:
-            True if upload was successful
+            True if upload was successful, False if file exists and overwrite=False
 
         Raises:
             SandboxFileNotFoundError: If local file doesn't exist
@@ -816,11 +817,11 @@ class Sandbox:
             SandboxFileError: If upload fails for other reasons
 
         Example:
-            # Upload a Python script
+            # Upload a Python script (won't overwrite if exists)
             sbx.upload_file("./script.py", "/tmp/script.py")
             
-            # Upload a data file
-            sbx.upload_file("./data.json", "/home/user/data.json")
+            # Upload and overwrite if exists
+            sbx.upload_file("./data.json", "/home/user/data.json", overwrite=True)
 
         Note:
             TODO: Temporary 4MB limit. Future versions will support streaming for larger files.
@@ -858,7 +859,7 @@ class Sandbox:
             raise SandboxFileError(f"Failed to read local file: {e}") from e
 
         # Upload file
-        payload = {"path": remote_path, "content": content_b64}
+        payload = {"path": remote_path, "content": content_b64, "overwrite": overwrite}
 
         try:
             response = self._client.put(
@@ -875,6 +876,10 @@ class Sandbox:
                     raise SandboxNotFoundError(f"Sandbox {self.sandbox_id} not found")
                 raise SandboxFileError(f"File upload failed: {data['error']}")
 
+            # Handle file exists case (silent failure)
+            if not data.get("success", False) and data.get("exists", False):
+                return False
+
             return data.get("success", False)
 
         except httpx.HTTPStatusError as e:
@@ -887,16 +892,17 @@ class Sandbox:
         except httpx.RequestError as e:
             raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
 
-    def download_file(self, remote_path: str, local_path: str) -> bool:
+    def download_file(self, remote_path: str, local_path: str, overwrite: bool = False) -> bool:
         """
         Download a file from the sandbox to local filesystem.
 
         Args:
             remote_path: Absolute path in the sandbox to download from (must start with /)
             local_path: Path on local filesystem where file should be saved
+            overwrite: If False (default), returns False when local file exists. If True, overwrites existing file.
 
         Returns:
-            True if download was successful
+            True if download was successful, False if file exists and overwrite=False
 
         Raises:
             SandboxFileNotFoundError: If remote file doesn't exist
@@ -906,11 +912,11 @@ class Sandbox:
             SandboxFileError: If download fails for other reasons
 
         Example:
-            # Download a result file
+            # Download a result file (won't overwrite if exists)
             sbx.download_file("/tmp/output.txt", "./results/output.txt")
             
-            # Download generated data
-            sbx.download_file("/home/user/data.csv", "./data.csv")
+            # Download and overwrite if exists
+            sbx.download_file("/home/user/data.csv", "./data.csv", overwrite=True)
 
         Note:
             TODO: Temporary 4MB limit. Future versions will support streaming for larger files.
@@ -920,6 +926,10 @@ class Sandbox:
         # Validate remote path is absolute
         if not remote_path.startswith("/"):
             raise SandboxValidationError("Remote path must be absolute (start with /)")
+
+        # Check if local file exists and overwrite is disabled
+        if os.path.exists(local_path) and not overwrite:
+            return False
 
         # Create parent directory if needed
         local_dir = os.path.dirname(local_path)

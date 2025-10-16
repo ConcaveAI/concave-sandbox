@@ -32,7 +32,7 @@ Example usage (context manager way):
     # Sandbox is automatically deleted after the with block
 """
 
-__version__ = "0.1.45"
+__version__ = "0.2.1"
 
 from .sandbox import (
     ExecuteResult,
