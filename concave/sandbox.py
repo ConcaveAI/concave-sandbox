@@ -396,9 +396,104 @@ class Sandbox:
             client.close()
 
     @classmethod
+    def list_page(
+        cls,
+        limit: int = 100,
+        cursor: Optional[str] = None,
+        since: Optional[int] = None,
+        until: Optional[int] = None,
+    ) -> dict:
+        """
+        List sandboxes with pagination metadata (single page).
+
+        Returns a dictionary with sandboxes and pagination info for manual cursor-based pagination.
+
+        Args:
+            limit: Maximum number of sandboxes to return (default: 100)
+            cursor: Pagination cursor for fetching next page
+            since: Unix timestamp (epoch seconds) - only return sandboxes created at or after this time
+            until: Unix timestamp (epoch seconds) - only return sandboxes created before this time
+
+        Returns:
+            Dictionary with keys:
+            - 'sandboxes': List of Sandbox instances
+            - 'count': Number of sandboxes in this response
+            - 'has_more': Boolean indicating if more pages exist
+            - 'next_cursor': String cursor for next page (None if no more pages)
+
+        Example:
+            # Manual pagination
+            page1 = Sandbox.list_page(limit=50)
+            print(f"Page 1: {page1['count']} sandboxes")
+            
+            if page1['has_more']:
+                page2 = Sandbox.list_page(limit=50, cursor=page1['next_cursor'])
+                print(f"Page 2: {page2['count']} sandboxes")
+        """
+        # Get credentials using helper method
+        base_url, api_key = cls._get_credentials(None, None)
+
+        # Create HTTP client using helper method
+        client = cls._create_http_client(api_key)
+
+        try:
+            # Build query params
+            params = {"limit": str(limit)}
+            if cursor:
+                params["cursor"] = cursor
+            if since is not None:
+                params["since"] = str(since)
+            if until is not None:
+                params["until"] = str(until)
+
+            # Make request
+            base = base_url.rstrip("/")
+            response = client.get(f"{base}/api/v1/sandboxes", params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            # Parse response
+            sandboxes_data = data.get("sandboxes") or []
+
+            # Create Sandbox instances
+            sandbox_instances = []
+            for sandbox_dict in sandboxes_data:
+                sandbox_id = sandbox_dict.get("id")
+                if sandbox_id:
+                    sandbox = cls(
+                        sandbox_id=sandbox_id,
+                        name=sandbox_id,
+                        base_url=base_url,
+                        api_key=api_key,
+                    )
+                    sandbox_instances.append(sandbox)
+
+            # Return full pagination response
+            return {
+                'sandboxes': sandbox_instances,
+                'count': data.get('count', len(sandbox_instances)),
+                'has_more': data.get('has_more', False),
+                'next_cursor': data.get('next_cursor'),
+            }
+
+        except httpx.HTTPStatusError as e:
+            cls._handle_http_error(e, "list sandboxes")
+        except httpx.TimeoutException as e:
+            raise SandboxTimeoutError(
+                "List sandboxes request timed out", timeout_ms=30000, operation="list"
+            ) from e
+        except httpx.RequestError as e:
+            raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
+        finally:
+            client.close()
+
+    @classmethod
     def list(
         cls,
         limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+        since: Optional[int] = None,
+        until: Optional[int] = None,
     ) -> list["Sandbox"]:
         """
         List all active sandboxes for the authenticated user.
@@ -406,7 +501,11 @@ class Sandbox:
         Returns sandboxes sorted by creation time (newest first).
 
         Args:
-            limit: Maximum number of sandboxes to return (default: None = all)
+            limit: Maximum number of sandboxes to return. If None (default), auto-paginates to fetch all.
+                   If provided, returns only the first page (up to limit items).
+            cursor: Pagination cursor for fetching next page (used with limit)
+            since: Unix timestamp (epoch seconds) - only return sandboxes created at or after this time
+            until: Unix timestamp (epoch seconds) - only return sandboxes created before this time
 
         Returns:
             List of Sandbox instances representing active sandboxes, sorted by newest first
@@ -416,18 +515,23 @@ class Sandbox:
             ValueError: If CONCAVE_SANDBOX_API_KEY environment variable is not set
 
         Example:
-            # List all sandboxes
+            # List all sandboxes (auto-paginates)
             sandboxes = Sandbox.list()
             print(f"Found {len(sandboxes)} active sandboxes")
 
-            # List only 10 most recent sandboxes
+            # List only first 10 sandboxes (single page)
             recent = Sandbox.list(limit=10)
             for sbx in recent:
                 print(f"Sandbox {sbx.sandbox_id}: uptime={sbx.uptime():.1f}s")
 
-            # List and clean up all
-            for sbx in Sandbox.list():
-                sbx.delete()
+            # List sandboxes with time filter (epoch seconds)
+            import time
+            one_hour_ago = int(time.time()) - 3600
+            recent_sandboxes = Sandbox.list(since=one_hour_ago)
+
+            # Manual pagination
+            page1 = Sandbox.list(limit=50)
+            # Get next_cursor from response metadata (not returned by this method)
         """
         # Get credentials using helper method
         base_url, api_key = cls._get_credentials(None, None)
@@ -435,45 +539,89 @@ class Sandbox:
         # Create HTTP client using helper method
         client = cls._create_http_client(api_key)
 
+        # Auto-pagination: if limit is None, fetch all pages
+        if limit is None:
+            all_sandboxes = []
+            current_cursor = cursor
+            
+            while True:
+                # Build query params
+                params = {}
+                if current_cursor:
+                    params["cursor"] = current_cursor
+                if since is not None:
+                    params["since"] = str(since)
+                if until is not None:
+                    params["until"] = str(until)
+
+                try:
+                    # Make request
+                    base = base_url.rstrip("/")
+                    response = client.get(f"{base}/api/v1/sandboxes", params=params)
+                    response.raise_for_status()
+                    data = response.json()
+
+                    # Parse response
+                    sandboxes_data = data.get("sandboxes") or []
+                    
+                    # Create Sandbox instances
+                    for sandbox_dict in sandboxes_data:
+                        sandbox_id = sandbox_dict.get("id")
+                        if sandbox_id:
+                            sandbox = cls(
+                                sandbox_id=sandbox_id,
+                                name=sandbox_id,
+                                base_url=base_url,
+                                api_key=api_key,
+                            )
+                            all_sandboxes.append(sandbox)
+
+                    # Check if there are more pages
+                    has_more = data.get("has_more", False)
+                    next_cursor = data.get("next_cursor")
+                    
+                    if not has_more or not next_cursor:
+                        break
+                    
+                    current_cursor = next_cursor
+
+                except httpx.HTTPStatusError as e:
+                    cls._handle_http_error(e, "list sandboxes")
+                except httpx.TimeoutException as e:
+                    raise SandboxTimeoutError(f"Request timed out while listing sandboxes: {str(e)}") from e
+                except httpx.RequestError as e:
+                    raise SandboxConnectionError(f"Connection failed while listing sandboxes: {str(e)}") from e
+
+            return all_sandboxes
+
+        # Single page fetch when limit is provided
         try:
-            # Make request to list sandboxes
+            # Build query params
+            params = {"limit": str(limit)}
+            if cursor:
+                params["cursor"] = cursor
+            if since is not None:
+                params["since"] = str(since)
+            if until is not None:
+                params["until"] = str(until)
+
+            # Make request
             base = base_url.rstrip("/")
-            response = client.get(f"{base}/api/v1/sandboxes")
+            response = client.get(f"{base}/api/v1/sandboxes", params=params)
             response.raise_for_status()
             data = response.json()
 
             # Parse response
             sandboxes_data = data.get("sandboxes") or []
 
-            # Sort by started_at descending (newest first)
-            # Parse started_at as ISO timestamp string
-            from datetime import datetime
-
-            def parse_timestamp(sandbox_dict):
-                try:
-                    started_at_str = sandbox_dict.get("started_at", "")
-                    # Parse ISO 8601 timestamp (e.g., "2024-10-11T12:34:56.789Z")
-                    return datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
-                except (ValueError, AttributeError):
-                    # If parsing fails, return epoch (oldest)
-                    return datetime.fromtimestamp(0)
-
-            sorted_sandboxes = sorted(sandboxes_data, key=parse_timestamp, reverse=True)
-
-            # Apply limit if specified
-            if limit is not None and limit > 0:
-                sorted_sandboxes = sorted_sandboxes[:limit]
-
-            # Create Sandbox instances for each sandbox
+            # Create Sandbox instances
             sandbox_instances = []
-            for sandbox_dict in sorted_sandboxes:
+            for sandbox_dict in sandboxes_data:
                 sandbox_id = sandbox_dict.get("id")
                 if sandbox_id:
-                    # Create a Sandbox instance with minimal info
-                    # We don't have a "name" from the API, so use ID as name
                     sandbox = cls(
                         sandbox_id=sandbox_id,
-                        name=sandbox_id,  # Use ID as name since API doesn't provide one
+                        name=sandbox_id,
                         base_url=base_url,
                         api_key=api_key,
                     )
