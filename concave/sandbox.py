@@ -340,6 +340,69 @@ class Sandbox:
         self._client = httpx.Client(timeout=httpx.Timeout(30.0), headers=headers)
 
     @classmethod
+    def get(cls, sandbox_id: str) -> "Sandbox":
+        """
+        Get an existing sandbox by its ID.
+
+        Use this when you have a sandbox ID stored elsewhere and want to reconnect to it.
+
+        Args:
+            sandbox_id: The UUID of an existing sandbox
+
+        Returns:
+            Sandbox instance connected to the existing sandbox
+
+        Raises:
+            SandboxNotFoundError: If the sandbox doesn't exist
+            SandboxAuthenticationError: If authentication fails
+            ValueError: If CONCAVE_SANDBOX_API_KEY environment variable is not set
+
+        Example:
+            # Store the ID somewhere
+            sbx = Sandbox.create(name="my-sandbox")
+            sandbox_id = sbx.sandbox_id
+            # ... save sandbox_id to database ...
+
+            # Later, reconnect using the ID
+            sbx = Sandbox.get(sandbox_id)
+            result = sbx.execute("echo 'still here!'")
+            print(result.stdout)
+        """
+        # Get credentials
+        base_url, api_key = cls._get_credentials(None, None)
+
+        # Create HTTP client to verify the sandbox exists
+        client = cls._create_http_client(api_key)
+
+        try:
+            # Verify sandbox exists by fetching its info
+            base = base_url.rstrip("/")
+            response = client.get(f"{base}/api/v1/sandboxes/{sandbox_id}")
+            response.raise_for_status()
+            sandbox_data = response.json()
+
+            # Create and return Sandbox instance
+            return cls(
+                sandbox_id=sandbox_id,
+                name=sandbox_id,  # Use ID as name since we don't store custom names
+                base_url=base_url,
+                api_key=api_key,
+            )
+
+        except httpx.HTTPStatusError as e:
+            cls._handle_http_error(e, "get sandbox")
+        except httpx.TimeoutException as e:
+            raise SandboxTimeoutError(
+                f"Request timed out while fetching sandbox {sandbox_id}", 
+                timeout_ms=30000, 
+                operation="get"
+            ) from e
+        except httpx.RequestError as e:
+            raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
+        finally:
+            client.close()
+
+    @classmethod
     def create(
         cls, name: str, internet_access: bool = True
     ) -> "Sandbox":
