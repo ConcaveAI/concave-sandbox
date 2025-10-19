@@ -465,7 +465,6 @@ class Sandbox:
         cursor: Optional[str] = None,
         since: Optional[int] = None,
         until: Optional[int] = None,
-        state: Optional[str] = None,
         internet_access: Optional[bool] = None,
         min_exec_count: Optional[int] = None,
         max_exec_count: Optional[int] = None,
@@ -480,7 +479,6 @@ class Sandbox:
             cursor: Pagination cursor for fetching next page
             since: Unix timestamp (epoch seconds) - only return sandboxes created at or after this time
             until: Unix timestamp (epoch seconds) - only return sandboxes created before this time
-            state: Filter by sandbox state ("running", "stopped", "error")
             internet_access: Filter by internet access (True/False)
             min_exec_count: Minimum number of executions
             max_exec_count: Maximum number of executions
@@ -497,11 +495,8 @@ class Sandbox:
             page1 = Sandbox.list_page(limit=50)
             print(f"Page 1: {page1['count']} sandboxes")
             
-            # Filter by state
-            running = Sandbox.list_page(state="running")
-            
-            # Multiple filters
-            active = Sandbox.list_page(state="running", internet_access=True, min_exec_count=5)
+            # Filter by internet access and executions
+            active = Sandbox.list_page(internet_access=True, min_exec_count=5)
         """
         # Get credentials using helper method
         base_url, api_key = cls._get_credentials(None, None)
@@ -518,8 +513,6 @@ class Sandbox:
                 params["since"] = str(since)
             if until is not None:
                 params["until"] = str(until)
-            if state:
-                params["state"] = state
             if internet_access is not None:
                 params["internet_access"] = "true" if internet_access else "false"
             if min_exec_count is not None:
@@ -575,7 +568,6 @@ class Sandbox:
         cursor: Optional[str] = None,
         since: Optional[int] = None,
         until: Optional[int] = None,
-        state: Optional[str] = None,
         internet_access: Optional[bool] = None,
         min_exec_count: Optional[int] = None,
         max_exec_count: Optional[int] = None,
@@ -591,7 +583,6 @@ class Sandbox:
             cursor: Pagination cursor for fetching next page (used with limit)
             since: Unix timestamp (epoch seconds) - only return sandboxes created at or after this time
             until: Unix timestamp (epoch seconds) - only return sandboxes created before this time
-            state: Filter by sandbox state ("running", "stopped", "error")
             internet_access: Filter by internet access (True/False)
             min_exec_count: Minimum number of executions
             max_exec_count: Maximum number of executions
@@ -607,9 +598,6 @@ class Sandbox:
             # List all sandboxes (auto-paginates)
             sandboxes = Sandbox.list()
             print(f"Found {len(sandboxes)} active sandboxes")
-
-            # List only running sandboxes
-            running = Sandbox.list(state="running")
             
             # List sandboxes with internet and at least 5 executions
             active = Sandbox.list(internet_access=True, min_exec_count=5)
@@ -617,7 +605,7 @@ class Sandbox:
             # List sandboxes with time filter (epoch seconds)
             import time
             one_hour_ago = int(time.time()) - 3600
-            recent_sandboxes = Sandbox.list(since=one_hour_ago, state="running")
+            recent_sandboxes = Sandbox.list(since=one_hour_ago)
         """
         # Get credentials using helper method
         base_url, api_key = cls._get_credentials(None, None)
@@ -639,8 +627,6 @@ class Sandbox:
                     params["since"] = str(since)
                 if until is not None:
                     params["until"] = str(until)
-                if state:
-                    params["state"] = state
                 if internet_access is not None:
                     params["internet_access"] = "true" if internet_access else "false"
                 if min_exec_count is not None:
@@ -698,8 +684,6 @@ class Sandbox:
                 params["since"] = str(since)
             if until is not None:
                 params["until"] = str(until)
-            if state:
-                params["state"] = state
             if internet_access is not None:
                 params["internet_access"] = "true" if internet_access else "false"
             if min_exec_count is not None:
