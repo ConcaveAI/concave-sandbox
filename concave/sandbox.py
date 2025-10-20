@@ -213,6 +213,20 @@ class SandboxFileNotFoundError(SandboxFileError):
         self.is_local = is_local
 
 
+class _ClassOnlyMethodDescriptor:
+    """Descriptor that makes get() accessible only as a class method."""
+
+    def __init__(self, method):
+        self.method = method
+
+    def __get__(self, instance, owner):
+        if instance is not None:
+            raise AttributeError(
+                "get() is a class method only. Use Sandbox.get(sandbox_id) instead of sbx.get(sandbox_id)"
+            )
+        return self.method.__get__(None, owner)
+
+
 class Sandbox:
     """
     Main interface for interacting with the Concave sandbox service.
@@ -309,23 +323,31 @@ class Sandbox:
         else:
             raise SandboxError(f"Failed to {operation}: {error_msg}") from e
 
-    def __init__(self, sandbox_id: str, name: str, base_url: str, api_key: Optional[str] = None):
+    def __init__(
+        self,
+        id: str,
+        name: str,
+        base_url: str,
+        api_key: Optional[str] = None,
+        started_at: Optional[float] = None,
+    ):
         """
         Initialize a Sandbox instance.
 
         Args:
-            sandbox_id: Unique identifier for the sandbox (UUID)
+            id: Unique identifier for the sandbox (UUID)
             name: Human-readable name for the sandbox
             base_url: Base URL of the sandbox service
             api_key: API key for authentication
+            started_at: Unix timestamp when sandbox was created (float)
 
         Note:
             This constructor should not be called directly. Use Sandbox.create() instead.
         """
-        self.sandbox_id = sandbox_id
+        self.id = id
         self.name = name
         self.base_url = base_url.rstrip("/")
-        self.created_at = time.time()
+        self.started_at = started_at if started_at is not None else time.time()
         self.api_key = api_key
 
         # Pre-compute API route roots
@@ -360,7 +382,7 @@ class Sandbox:
         Example:
             # Store the ID somewhere
             sbx = Sandbox.create(name="my-sandbox")
-            sandbox_id = sbx.sandbox_id
+            sandbox_id = sbx.id
             # ... save sandbox_id to database ...
 
             # Later, reconnect using the ID
@@ -381,12 +403,28 @@ class Sandbox:
             response.raise_for_status()
             sandbox_data = response.json()
 
+            # Parse started_at timestamp
+            started_at = None
+            if "started_at" in sandbox_data:
+                started_at_value = sandbox_data["started_at"]
+                # Handle both ISO string and numeric timestamp formats
+                if isinstance(started_at_value, str):
+                    from datetime import datetime
+                    try:
+                        dt = datetime.fromisoformat(started_at_value.replace('Z', '+00:00'))
+                        started_at = dt.timestamp()
+                    except (ValueError, AttributeError):
+                        started_at = None
+                elif isinstance(started_at_value, (int, float)):
+                    started_at = float(started_at_value)
+
             # Create and return Sandbox instance
             return cls(
-                sandbox_id=sandbox_id,
+                id=sandbox_id,
                 name=sandbox_id,  # Use ID as name since we don't store custom names
                 base_url=base_url,
                 api_key=api_key,
+                started_at=started_at,
             )
 
         except httpx.HTTPStatusError as e:
@@ -401,6 +439,9 @@ class Sandbox:
             raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
         finally:
             client.close()
+
+    # Apply descriptor to make get() class-only
+    get = _ClassOnlyMethodDescriptor(get)
 
     @classmethod
     def create(
@@ -444,7 +485,23 @@ class Sandbox:
                 )
 
             sandbox_id = sandbox_data["id"]
-            return cls(sandbox_id, name, base_url, api_key)
+            
+            # Parse started_at timestamp
+            started_at = None
+            if "started_at" in sandbox_data:
+                started_at_value = sandbox_data["started_at"]
+                # Handle both ISO string and numeric timestamp formats
+                if isinstance(started_at_value, str):
+                    from datetime import datetime
+                    try:
+                        dt = datetime.fromisoformat(started_at_value.replace('Z', '+00:00'))
+                        started_at = dt.timestamp()
+                    except (ValueError, AttributeError):
+                        started_at = None
+                elif isinstance(started_at_value, (int, float)):
+                    started_at = float(started_at_value)
+            
+            return cls(sandbox_id, name, base_url, api_key, started_at)
 
         except httpx.HTTPStatusError as e:
             cls._handle_http_error(e, "create sandbox")
@@ -534,11 +591,26 @@ class Sandbox:
             for sandbox_dict in sandboxes_data:
                 sandbox_id = sandbox_dict.get("id")
                 if sandbox_id:
+                    # Parse started_at timestamp
+                    started_at = None
+                    if "started_at" in sandbox_dict:
+                        started_at_value = sandbox_dict["started_at"]
+                        if isinstance(started_at_value, str):
+                            from datetime import datetime
+                            try:
+                                dt = datetime.fromisoformat(started_at_value.replace('Z', '+00:00'))
+                                started_at = dt.timestamp()
+                            except (ValueError, AttributeError):
+                                started_at = None
+                        elif isinstance(started_at_value, (int, float)):
+                            started_at = float(started_at_value)
+                    
                     sandbox = cls(
-                        sandbox_id=sandbox_id,
+                        id=sandbox_id,
                         name=sandbox_id,
                         base_url=base_url,
                         api_key=api_key,
+                        started_at=started_at,
                     )
                     sandbox_instances.append(sandbox)
 
@@ -648,11 +720,26 @@ class Sandbox:
                     for sandbox_dict in sandboxes_data:
                         sandbox_id = sandbox_dict.get("id")
                         if sandbox_id:
+                            # Parse started_at timestamp
+                            started_at = None
+                            if "started_at" in sandbox_dict:
+                                started_at_value = sandbox_dict["started_at"]
+                                if isinstance(started_at_value, str):
+                                    from datetime import datetime
+                                    try:
+                                        dt = datetime.fromisoformat(started_at_value.replace('Z', '+00:00'))
+                                        started_at = dt.timestamp()
+                                    except (ValueError, AttributeError):
+                                        started_at = None
+                                elif isinstance(started_at_value, (int, float)):
+                                    started_at = float(started_at_value)
+                            
                             sandbox = cls(
-                                sandbox_id=sandbox_id,
+                                id=sandbox_id,
                                 name=sandbox_id,
                                 base_url=base_url,
                                 api_key=api_key,
+                                started_at=started_at,
                             )
                             all_sandboxes.append(sandbox)
 
@@ -705,11 +792,26 @@ class Sandbox:
             for sandbox_dict in sandboxes_data:
                 sandbox_id = sandbox_dict.get("id")
                 if sandbox_id:
+                    # Parse started_at timestamp
+                    started_at = None
+                    if "started_at" in sandbox_dict:
+                        started_at_value = sandbox_dict["started_at"]
+                        if isinstance(started_at_value, str):
+                            from datetime import datetime
+                            try:
+                                dt = datetime.fromisoformat(started_at_value.replace('Z', '+00:00'))
+                                started_at = dt.timestamp()
+                            except (ValueError, AttributeError):
+                                started_at = None
+                        elif isinstance(started_at_value, (int, float)):
+                            started_at = float(started_at_value)
+                    
                     sandbox = cls(
-                        sandbox_id=sandbox_id,
+                        id=sandbox_id,
                         name=sandbox_id,
                         base_url=base_url,
                         api_key=api_key,
+                        started_at=started_at,
                     )
                     sandbox_instances.append(sandbox)
 
@@ -763,7 +865,7 @@ class Sandbox:
 
         try:
             response = self._client.post(
-                f"{self._sandboxes_url}/{self.sandbox_id}/exec",
+                f"{self._sandboxes_url}/{self.id}/exec",
                 json=payload,
                 timeout=request_timeout,
             )
@@ -773,7 +875,7 @@ class Sandbox:
             # Handle error responses from the service
             if "error" in data:
                 if "sandbox not found" in data["error"].lower():
-                    raise SandboxNotFoundError(f"Sandbox {self.sandbox_id} not found")
+                    raise SandboxNotFoundError(f"Sandbox {self.id} not found")
                 raise SandboxExecutionError(f"Execution failed: {data['error']}")
 
             return ExecuteResult(
@@ -838,7 +940,7 @@ class Sandbox:
 
         try:
             response = self._client.post(
-                f"{self._sandboxes_url}/{self.sandbox_id}/run",
+                f"{self._sandboxes_url}/{self.id}/run",
                 json=request_data,
                 timeout=request_timeout,
             )
@@ -848,7 +950,7 @@ class Sandbox:
             # Handle error responses from the service
             if "error" in data:
                 if "sandbox not found" in data["error"].lower():
-                    raise SandboxNotFoundError(f"Sandbox {self.sandbox_id} not found")
+                    raise SandboxNotFoundError(f"Sandbox {self.id} not found")
                 raise SandboxExecutionError(f"Code execution failed: {data['error']}")
 
             return RunResult(
@@ -875,7 +977,7 @@ class Sandbox:
         Delete the sandbox and free up resources.
 
         Returns:
-            True if deletion was successful, False otherwise
+            True if deletion was successful or sandbox already deleted, False otherwise
 
         Example:
             success = sbx.delete()
@@ -887,15 +989,25 @@ class Sandbox:
             for further operations as the underlying sandbox will be destroyed.
         """
         try:
-            response = self._client.delete(f"{self._sandboxes_url}/{self.sandbox_id}")
+            response = self._client.delete(f"{self._sandboxes_url}/{self.id}")
             response.raise_for_status()
             data = response.json()
 
             # Check if deletion was successful
             return data.get("status") == "deleted"
 
-        except (httpx.HTTPStatusError, httpx.RequestError):
-            # Log the error but don't raise - deletion might have already occurred
+        except httpx.HTTPStatusError as e:
+            # 404 means sandbox not found - already deleted, so return True
+            if e.response.status_code == 404:
+                return True
+            # 502 means backend timeout - deletion may still succeed, so return True
+            # The sandbox will be cleaned up eventually by the backend
+            if e.response.status_code == 502:
+                return True
+            # Other errors - return False
+            return False
+        except httpx.RequestError:
+            # Network errors - return False
             return False
 
     def ping(self) -> bool:
@@ -918,7 +1030,7 @@ class Sandbox:
         """
         try:
             response = self._client.get(
-                f"{self._sandboxes_url}/{self.sandbox_id}/ping",
+                f"{self._sandboxes_url}/{self.id}/ping",
                 timeout=5.0,
             )
             response.raise_for_status()
@@ -929,12 +1041,12 @@ class Sandbox:
         except httpx.HTTPStatusError as e:
             status_code = e.response.status_code
             if status_code == 404:
-                raise SandboxNotFoundError(f"Sandbox {self.sandbox_id} not found") from e
+                raise SandboxNotFoundError(f"Sandbox {self.id} not found") from e
             elif status_code == 401 or status_code == 403:
                 raise SandboxAuthenticationError("Authentication failed") from e
             elif status_code == 502 or status_code == 503:
                 raise SandboxUnavailableError(
-                    f"Sandbox {self.sandbox_id} is not ready or unreachable", status_code
+                    f"Sandbox {self.id} is not ready or unreachable", status_code
                 ) from e
             else:
                 # For other errors, return False instead of raising
@@ -966,7 +1078,7 @@ class Sandbox:
         """
         try:
             response = self._client.get(
-                f"{self._sandboxes_url}/{self.sandbox_id}/uptime",
+                f"{self._sandboxes_url}/{self.id}/uptime",
                 timeout=5.0,
             )
             response.raise_for_status()
@@ -1016,7 +1128,7 @@ class Sandbox:
             print(f"IP address: {status['ip']}")
         """
         try:
-            response = self._client.get(f"{self._sandboxes_url}/{self.sandbox_id}")
+            response = self._client.get(f"{self._sandboxes_url}/{self.id}")
             response.raise_for_status()
             return response.json()
 
@@ -1029,6 +1141,45 @@ class Sandbox:
             ) from e
         except httpx.RequestError as e:
             raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
+
+    @property
+    def info(self) -> Dict[str, Any]:
+        """
+        Get comprehensive sandbox information including id, name, started_at, and backend status.
+
+        This property combines locally-stored attributes (id, name, started_at) with
+        real-time status information from the backend (state, IP, exec_count, etc.).
+
+        Returns:
+            Dictionary containing:
+            - id: Sandbox identifier (str)
+            - name: Sandbox name (str)
+            - started_at: Creation timestamp as float (Unix epoch)
+            - user_id: User who owns the sandbox (str)
+            - ip: Sandbox IP address (str)
+            - state: Current sandbox state (str)
+            - exec_count: Number of commands executed (int)
+            - internet_access: Whether internet is enabled (bool)
+
+        Raises:
+            SandboxNotFoundError: If the sandbox no longer exists
+            SandboxTimeoutError: If the request times out
+            SandboxConnectionError: If unable to connect to the service
+
+        Example:
+            sbx = Sandbox.create(name="my-sandbox")
+            info = sbx.info
+            print(f"Sandbox {info['id']} created at {info['started_at']}")
+            print(f"State: {info['state']}, IP: {info['ip']}")
+            print(f"Executed {info['exec_count']} commands")
+        """
+        status_data = self.status()
+        return {
+            'id': self.id,
+            'name': self.name,
+            'started_at': self.started_at,
+            **status_data
+        }
 
     def upload_file(self, local_path: str, remote_path: str, overwrite: bool = False) -> bool:
         """
@@ -1097,7 +1248,7 @@ class Sandbox:
 
         try:
             response = self._client.put(
-                f"{self._sandboxes_url}/{self.sandbox_id}/files",
+                f"{self._sandboxes_url}/{self.id}/files",
                 json=payload,
                 timeout=35.0,  # Generous timeout for file operations
             )
@@ -1107,7 +1258,7 @@ class Sandbox:
             # Handle error responses
             if "error" in data:
                 if "not found" in data["error"].lower():
-                    raise SandboxNotFoundError(f"Sandbox {self.sandbox_id} not found")
+                    raise SandboxNotFoundError(f"Sandbox {self.id} not found")
                 raise SandboxFileError(f"File upload failed: {data['error']}")
 
             # Handle file exists case (silent failure)
@@ -1173,7 +1324,7 @@ class Sandbox:
         # Download file
         try:
             response = self._client.get(
-                f"{self._sandboxes_url}/{self.sandbox_id}/files",
+                f"{self._sandboxes_url}/{self.id}/files",
                 params={"path": remote_path},
                 timeout=35.0,  # Generous timeout for file operations
             )
@@ -1184,7 +1335,7 @@ class Sandbox:
             if "error" in data:
                 if "not found" in data["error"].lower():
                     if "sandbox" in data["error"].lower():
-                        raise SandboxNotFoundError(f"Sandbox {self.sandbox_id} not found")
+                        raise SandboxNotFoundError(f"Sandbox {self.id} not found")
                     else:
                         raise SandboxFileNotFoundError(
                             f"Remote file not found: {remote_path}",
@@ -1226,7 +1377,7 @@ class Sandbox:
 
     def __repr__(self):
         """String representation of the Sandbox instance."""
-        return f"Sandbox(id={self.sandbox_id}, name='{self.name}', created_at={self.created_at})"
+        return f"Sandbox(id={self.id}, name='{self.name}', started_at={self.started_at})"
 
 
 @contextmanager
