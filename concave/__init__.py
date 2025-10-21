@@ -9,7 +9,7 @@ Example usage (traditional way):
     from concave import Sandbox
 
     # Create a new sandbox
-    sbx = Sandbox.create(name="test")
+    sbx = Sandbox.create()
 
     # Execute shell commands
     output = sbx.execute("uname -a")
@@ -26,13 +26,13 @@ Example usage (context manager way):
     from concave import sandbox
 
     # Automatically create and clean up sandbox
-    with sandbox(name="test") as s:
+    with sandbox() as s:
         result = s.run("print('Hello from Concave!')")
         print(result.stdout)
     # Sandbox is automatically deleted after the with block
 """
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 from .sandbox import (
     ExecuteResult,

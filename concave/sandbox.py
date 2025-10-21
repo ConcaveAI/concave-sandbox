@@ -326,28 +326,28 @@ class Sandbox:
     def __init__(
         self,
         id: str,
-        name: str,
         base_url: str,
         api_key: Optional[str] = None,
         started_at: Optional[float] = None,
+        metadata: Optional[dict[str, str]] = None,
     ):
         """
         Initialize a Sandbox instance.
 
         Args:
             id: Unique identifier for the sandbox (UUID)
-            name: Human-readable name for the sandbox
             base_url: Base URL of the sandbox service
             api_key: API key for authentication
             started_at: Unix timestamp when sandbox was created (float)
+            metadata: Immutable metadata attached to the sandbox
 
         Note:
             This constructor should not be called directly. Use Sandbox.create() instead.
         """
         self.id = id
-        self.name = name
         self.base_url = base_url.rstrip("/")
         self.started_at = started_at if started_at is not None else time.time()
+        self.metadata = metadata
         self.api_key = api_key
 
         # Pre-compute API route roots
@@ -381,7 +381,7 @@ class Sandbox:
 
         Example:
             # Store the ID somewhere
-            sbx = Sandbox.create(name="my-sandbox")
+            sbx = Sandbox.create()
             sandbox_id = sbx.id
             # ... save sandbox_id to database ...
 
@@ -421,7 +421,6 @@ class Sandbox:
             # Create and return Sandbox instance
             return cls(
                 id=sandbox_id,
-                name=sandbox_id,  # Use ID as name since we don't store custom names
                 base_url=base_url,
                 api_key=api_key,
                 started_at=started_at,
@@ -445,28 +444,63 @@ class Sandbox:
 
     @classmethod
     def create(
-        cls, name: str, internet_access: bool = True
+        cls, internet_access: bool = True, metadata: Optional[dict[str, str]] = None
     ) -> "Sandbox":
         """
         Create a new sandbox instance.
 
         Args:
-            name: Human-readable name for the sandbox
             internet_access: Enable internet access for the sandbox (default: True)
+            metadata: Optional immutable metadata to attach (key-value pairs)
 
         Returns:
             A new Sandbox instance ready for code execution
 
         Raises:
             SandboxCreationError: If sandbox creation fails
+            SandboxValidationError: If metadata validation fails
             ValueError: If CONCAVE_SANDBOX_API_KEY environment variable is not set
 
         Example:
-            sbx = Sandbox.create(name="my-test-sandbox")
-            sbx_no_internet = Sandbox.create(name="isolated-sandbox", internet_access=False)
+            sbx = Sandbox.create()
+            sbx_no_internet = Sandbox.create(internet_access=False)
+            sbx_with_meta = Sandbox.create(metadata={"env": "prod", "user": "123"})
         """
         # Get credentials using helper method
         base_url, api_key = cls._get_credentials(None, None)
+
+        # Validate metadata if provided
+        if metadata is not None:
+            import re
+            
+            # Validate key count
+            if len(metadata) > 32:
+                raise SandboxValidationError("metadata cannot have more than 32 keys")
+            
+            # Validate keys and values
+            total_size = 0
+            key_regex = re.compile(r'^[A-Za-z0-9_.-]+$')
+            for key, value in metadata.items():
+                # Validate key
+                if not isinstance(key, str) or len(key) < 1 or len(key) > 64:
+                    raise SandboxValidationError(f"metadata key '{key}' must be a string between 1 and 64 characters")
+                if not key_regex.match(key):
+                    raise SandboxValidationError(f"metadata key '{key}' contains invalid characters (only A-Za-z0-9_.- allowed)")
+                
+                # Validate value
+                if not isinstance(value, str):
+                    raise SandboxValidationError(f"metadata value for key '{key}' must be a string")
+                value_bytes = len(value.encode('utf-8'))
+                if value_bytes > 1024:
+                    raise SandboxValidationError(f"metadata value for key '{key}' exceeds 1024 bytes")
+                if '\x00' in value:
+                    raise SandboxValidationError(f"metadata value for key '{key}' contains NUL byte")
+                
+                total_size += len(key.encode('utf-8')) + value_bytes
+            
+            # Validate total size
+            if total_size > 4096:
+                raise SandboxValidationError(f"total metadata size ({total_size} bytes) exceeds limit of 4096 bytes")
 
         # Create HTTP client using helper method
         client = cls._create_http_client(api_key)
@@ -474,7 +508,10 @@ class Sandbox:
         try:
             # Make creation request to the sandbox service
             base = base_url.rstrip("/")
-            response = client.put(f"{base}/api/v1/sandboxes", json={"internet_access": internet_access})
+            payload = {"internet_access": internet_access}
+            if metadata:
+                payload["metadata"] = metadata
+            response = client.put(f"{base}/api/v1/sandboxes", json=payload)
             response.raise_for_status()
             sandbox_data = response.json()
 
@@ -501,7 +538,16 @@ class Sandbox:
                 elif isinstance(started_at_value, (int, float)):
                     started_at = float(started_at_value)
             
-            return cls(sandbox_id, name, base_url, api_key, started_at)
+            # Extract metadata from response
+            response_metadata = sandbox_data.get("metadata")
+            
+            # Validate metadata was stored if we sent it
+            if metadata and response_metadata != metadata:
+                raise SandboxInvalidResponseError(
+                    f"Server metadata mismatch: expected {metadata}, got {response_metadata}"
+                )
+            
+            return cls(sandbox_id, base_url, api_key, started_at, response_metadata)
 
         except httpx.HTTPStatusError as e:
             cls._handle_http_error(e, "create sandbox")
@@ -525,6 +571,8 @@ class Sandbox:
         internet_access: Optional[bool] = None,
         min_exec_count: Optional[int] = None,
         max_exec_count: Optional[int] = None,
+        metadata_exists: Optional[list[str]] = None,
+        metadata_equals: Optional[dict[str, str]] = None,
     ) -> dict:
         """
         List sandboxes with pagination metadata (single page).
@@ -539,6 +587,8 @@ class Sandbox:
             internet_access: Filter by internet access (True/False)
             min_exec_count: Minimum number of executions
             max_exec_count: Maximum number of executions
+            metadata_exists: List of metadata keys that must exist
+            metadata_equals: Dict of key-value pairs that must match exactly
 
         Returns:
             Dictionary with keys:
@@ -554,6 +604,9 @@ class Sandbox:
             
             # Filter by internet access and executions
             active = Sandbox.list_page(internet_access=True, min_exec_count=5)
+            
+            # Filter by metadata
+            prod_sandboxes = Sandbox.list_page(metadata_equals={"env": "prod"})
         """
         # Get credentials using helper method
         base_url, api_key = cls._get_credentials(None, None)
@@ -562,20 +615,55 @@ class Sandbox:
         client = cls._create_http_client(api_key)
 
         try:
+            # Validate metadata filters
+            if metadata_exists:
+                import re
+                key_regex = re.compile(r'^[A-Za-z0-9_.-]+$')
+                for key in metadata_exists:
+                    if not isinstance(key, str) or len(key) < 1 or len(key) > 64:
+                        raise SandboxValidationError(f"metadata_exists key '{key}' must be a string between 1 and 64 characters")
+                    if not key_regex.match(key):
+                        raise SandboxValidationError(f"metadata_exists key '{key}' contains invalid characters (only A-Za-z0-9_.- allowed)")
+            
+            if metadata_equals:
+                import re
+                key_regex = re.compile(r'^[A-Za-z0-9_.-]+$')
+                for key, value in metadata_equals.items():
+                    if not isinstance(key, str) or len(key) < 1 or len(key) > 64:
+                        raise SandboxValidationError(f"metadata_equals key '{key}' must be a string between 1 and 64 characters")
+                    if ':' in key:
+                        raise SandboxValidationError(f"metadata_equals key '{key}' cannot contain colon character")
+                    if not key_regex.match(key):
+                        raise SandboxValidationError(f"metadata_equals key '{key}' contains invalid characters (only A-Za-z0-9_.- allowed)")
+                    if not isinstance(value, str):
+                        raise SandboxValidationError(f"metadata_equals value for key '{key}' must be a string")
+                    if len(value.encode('utf-8')) > 1024:
+                        raise SandboxValidationError(f"metadata_equals value for key '{key}' exceeds 1024 bytes")
+
             # Build query params
-            params = {"limit": str(limit)}
+            params = []
+            params.append(("limit", str(limit)))
             if cursor:
-                params["cursor"] = cursor
+                params.append(("cursor", cursor))
             if since is not None:
-                params["since"] = str(since)
+                params.append(("since", str(since)))
             if until is not None:
-                params["until"] = str(until)
+                params.append(("until", str(until)))
             if internet_access is not None:
-                params["internet_access"] = "true" if internet_access else "false"
+                params.append(("internet_access", "true" if internet_access else "false"))
             if min_exec_count is not None:
-                params["min_exec_count"] = str(min_exec_count)
+                params.append(("min_exec_count", str(min_exec_count)))
             if max_exec_count is not None:
-                params["max_exec_count"] = str(max_exec_count)
+                params.append(("max_exec_count", str(max_exec_count)))
+            
+            # Add metadata filters (repeatable query params)
+            if metadata_exists:
+                for key in metadata_exists:
+                    params.append(("metadata_exists", key))
+            
+            if metadata_equals:
+                for key, value in metadata_equals.items():
+                    params.append(("metadata_equals", f"{key}:{value}"))
 
             # Make request
             base = base_url.rstrip("/")
@@ -607,7 +695,6 @@ class Sandbox:
                     
                     sandbox = cls(
                         id=sandbox_id,
-                        name=sandbox_id,
                         base_url=base_url,
                         api_key=api_key,
                         started_at=started_at,
@@ -643,6 +730,8 @@ class Sandbox:
         internet_access: Optional[bool] = None,
         min_exec_count: Optional[int] = None,
         max_exec_count: Optional[int] = None,
+        metadata_exists: Optional[list[str]] = None,
+        metadata_equals: Optional[dict[str, str]] = None,
     ) -> list["Sandbox"]:
         """
         List all active sandboxes for the authenticated user.
@@ -658,12 +747,15 @@ class Sandbox:
             internet_access: Filter by internet access (True/False)
             min_exec_count: Minimum number of executions
             max_exec_count: Maximum number of executions
+            metadata_exists: List of metadata keys that must exist
+            metadata_equals: Dict of key-value pairs that must match exactly
 
         Returns:
             List of Sandbox instances representing active sandboxes, sorted by newest first
 
         Raises:
             SandboxAuthenticationError: If authentication fails
+            SandboxValidationError: If metadata filters are invalid
             ValueError: If CONCAVE_SANDBOX_API_KEY environment variable is not set
 
         Example:
@@ -678,12 +770,40 @@ class Sandbox:
             import time
             one_hour_ago = int(time.time()) - 3600
             recent_sandboxes = Sandbox.list(since=one_hour_ago)
+            
+            # List sandboxes with metadata filters
+            prod_sandboxes = Sandbox.list(metadata_equals={"env": "prod"})
         """
         # Get credentials using helper method
         base_url, api_key = cls._get_credentials(None, None)
 
         # Create HTTP client using helper method
         client = cls._create_http_client(api_key)
+
+        # Validate metadata filters
+        if metadata_exists:
+            import re
+            key_regex = re.compile(r'^[A-Za-z0-9_.-]+$')
+            for key in metadata_exists:
+                if not isinstance(key, str) or len(key) < 1 or len(key) > 64:
+                    raise SandboxValidationError(f"metadata_exists key '{key}' must be a string between 1 and 64 characters")
+                if not key_regex.match(key):
+                    raise SandboxValidationError(f"metadata_exists key '{key}' contains invalid characters (only A-Za-z0-9_.- allowed)")
+        
+        if metadata_equals:
+            import re
+            key_regex = re.compile(r'^[A-Za-z0-9_.-]+$')
+            for key, value in metadata_equals.items():
+                if not isinstance(key, str) or len(key) < 1 or len(key) > 64:
+                    raise SandboxValidationError(f"metadata_equals key '{key}' must be a string between 1 and 64 characters")
+                if ':' in key:
+                    raise SandboxValidationError(f"metadata_equals key '{key}' cannot contain colon character")
+                if not key_regex.match(key):
+                    raise SandboxValidationError(f"metadata_equals key '{key}' contains invalid characters (only A-Za-z0-9_.- allowed)")
+                if not isinstance(value, str):
+                    raise SandboxValidationError(f"metadata_equals value for key '{key}' must be a string")
+                if len(value.encode('utf-8')) > 1024:
+                    raise SandboxValidationError(f"metadata_equals value for key '{key}' exceeds 1024 bytes")
 
         # Auto-pagination: if limit is None, fetch all pages
         if limit is None:
@@ -692,19 +812,27 @@ class Sandbox:
             
             while True:
                 # Build query params
-                params = {}
+                params = []
                 if current_cursor:
-                    params["cursor"] = current_cursor
+                    params.append(("cursor", current_cursor))
                 if since is not None:
-                    params["since"] = str(since)
+                    params.append(("since", str(since)))
                 if until is not None:
-                    params["until"] = str(until)
+                    params.append(("until", str(until)))
                 if internet_access is not None:
-                    params["internet_access"] = "true" if internet_access else "false"
+                    params.append(("internet_access", "true" if internet_access else "false"))
                 if min_exec_count is not None:
-                    params["min_exec_count"] = str(min_exec_count)
+                    params.append(("min_exec_count", str(min_exec_count)))
                 if max_exec_count is not None:
-                    params["max_exec_count"] = str(max_exec_count)
+                    params.append(("max_exec_count", str(max_exec_count)))
+                
+                # Add metadata filters
+                if metadata_exists:
+                    for key in metadata_exists:
+                        params.append(("metadata_exists", key))
+                if metadata_equals:
+                    for key, value in metadata_equals.items():
+                        params.append(("metadata_equals", f"{key}:{value}"))
 
                 try:
                     # Make request
@@ -736,7 +864,6 @@ class Sandbox:
                             
                             sandbox = cls(
                                 id=sandbox_id,
-                                name=sandbox_id,
                                 base_url=base_url,
                                 api_key=api_key,
                                 started_at=started_at,
@@ -764,19 +891,28 @@ class Sandbox:
         # Single page fetch when limit is provided
         try:
             # Build query params
-            params = {"limit": str(limit)}
+            params = []
+            params.append(("limit", str(limit)))
             if cursor:
-                params["cursor"] = cursor
+                params.append(("cursor", cursor))
             if since is not None:
-                params["since"] = str(since)
+                params.append(("since", str(since)))
             if until is not None:
-                params["until"] = str(until)
+                params.append(("until", str(until)))
             if internet_access is not None:
-                params["internet_access"] = "true" if internet_access else "false"
+                params.append(("internet_access", "true" if internet_access else "false"))
             if min_exec_count is not None:
-                params["min_exec_count"] = str(min_exec_count)
+                params.append(("min_exec_count", str(min_exec_count)))
             if max_exec_count is not None:
-                params["max_exec_count"] = str(max_exec_count)
+                params.append(("max_exec_count", str(max_exec_count)))
+            
+            # Add metadata filters
+            if metadata_exists:
+                for key in metadata_exists:
+                    params.append(("metadata_exists", key))
+            if metadata_equals:
+                for key, value in metadata_equals.items():
+                    params.append(("metadata_equals", f"{key}:{value}"))
 
             # Make request
             base = base_url.rstrip("/")
@@ -808,7 +944,6 @@ class Sandbox:
                     
                     sandbox = cls(
                         id=sandbox_id,
-                        name=sandbox_id,
                         base_url=base_url,
                         api_key=api_key,
                         started_at=started_at,
@@ -1145,15 +1280,14 @@ class Sandbox:
     @property
     def info(self) -> Dict[str, Any]:
         """
-        Get comprehensive sandbox information including id, name, started_at, and backend status.
+        Get comprehensive sandbox information including id, started_at, and backend status.
 
-        This property combines locally-stored attributes (id, name, started_at) with
+        This property combines locally-stored attributes (id, started_at) with
         real-time status information from the backend (state, IP, exec_count, etc.).
 
         Returns:
             Dictionary containing:
             - id: Sandbox identifier (str)
-            - name: Sandbox name (str)
             - started_at: Creation timestamp as float (Unix epoch)
             - user_id: User who owns the sandbox (str)
             - ip: Sandbox IP address (str)
@@ -1167,7 +1301,7 @@ class Sandbox:
             SandboxConnectionError: If unable to connect to the service
 
         Example:
-            sbx = Sandbox.create(name="my-sandbox")
+            sbx = Sandbox.create()
             info = sbx.info
             print(f"Sandbox {info['id']} created at {info['started_at']}")
             print(f"State: {info['state']}, IP: {info['ip']}")
@@ -1176,7 +1310,6 @@ class Sandbox:
         status_data = self.status()
         return {
             'id': self.id,
-            'name': self.name,
             'started_at': self.started_at,
             **status_data
         }
@@ -1377,11 +1510,11 @@ class Sandbox:
 
     def __repr__(self):
         """String representation of the Sandbox instance."""
-        return f"Sandbox(id={self.id}, name='{self.name}', started_at={self.started_at})"
+        return f"Sandbox(id={self.id}, started_at={self.started_at})"
 
 
 @contextmanager
-def sandbox(name: str = "sandbox", internet_access: bool = True):
+def sandbox(internet_access: bool = True, metadata: Optional[dict[str, str]] = None):
     """
     Context manager for creating and automatically cleaning up a sandbox.
 
@@ -1389,32 +1522,38 @@ def sandbox(name: str = "sandbox", internet_access: bool = True):
     handling creation and deletion using Python's with statement.
 
     Args:
-        name: Human-readable name for the sandbox (default: "sandbox")
         internet_access: Enable internet access for the sandbox (default: True)
+        metadata: Optional immutable metadata to attach (key-value pairs)
 
     Yields:
         Sandbox: A sandbox instance ready for code execution
 
     Raises:
         SandboxCreationError: If sandbox creation fails
+        SandboxValidationError: If metadata validation fails
         ValueError: If CONCAVE_SANDBOX_API_KEY environment variable is not set
 
     Example:
         ```python
         from concave import sandbox
 
-        with sandbox(name="my-test") as s:
+        with sandbox() as s:
             result = s.run("print('Hello from Concave!')")
             print(result.stdout)
         # Sandbox is automatically deleted after the with block
         
         # Create sandbox without internet access
-        with sandbox(name="isolated", internet_access=False) as s:
+        with sandbox(internet_access=False) as s:
             result = s.run("print('No internet here!')")
+            print(result.stdout)
+        
+        # Create sandbox with metadata
+        with sandbox(metadata={"env": "prod", "user": "123"}) as s:
+            result = s.run("print('Tracked sandbox!')")
             print(result.stdout)
         ```
     """
-    sbx = Sandbox.create(name=name, internet_access=internet_access)
+    sbx = Sandbox.create(internet_access=internet_access, metadata=metadata)
     try:
         yield sbx
     finally:

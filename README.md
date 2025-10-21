@@ -43,7 +43,7 @@ Execute Python code securely in isolated sandboxes:
 ```python
 from concave import sandbox
 
-with sandbox(name="python-sandbox") as sbx:
+with sandbox() as sbx:
     result = sbx.run("print(668.5 * 2)")
     print(result.stdout) 
     
@@ -57,7 +57,7 @@ If you prefer to manage the sandbox lifecycle yourself:
 ```python
 from concave import Sandbox
 
-sbx = Sandbox.create(name="my-sandbox")
+sbx = Sandbox.create()
 
 # Execute shell commands
 result = sbx.execute("uname -a")
