@@ -988,10 +988,12 @@ class Sandbox:
         if not command.strip():
             raise SandboxValidationError("Command cannot be empty")
 
+        # Default timeout to 10000ms (10 seconds) if not specified
+        if timeout is None:
+            timeout = 10000
+
         # Prepare request payload
-        payload = {"command": command}
-        if timeout is not None:
-            payload["timeout"] = timeout
+        payload = {"command": command, "timeout": timeout}
 
         # Set per-request timeout (ms to seconds + buffer)
         request_timeout = 12.0  # default: 10s + 2s buffer
@@ -1063,10 +1065,12 @@ class Sandbox:
         if language != "python":
             raise SandboxValidationError(f"Unsupported language: {language}. Currently only 'python' is supported.")
 
+        # Default timeout to 10000ms (10 seconds) if not specified
+        if timeout is None:
+            timeout = 10000
+
         # Prepare request payload
-        request_data = {"code": code, "language": language}
-        if timeout is not None:
-            request_data["timeout"] = timeout
+        request_data = {"code": code, "language": language, "timeout": timeout}
 
         # Set per-request timeout (ms to seconds + buffer)
         request_timeout = 12.0  # default: 10s + 2s buffer
