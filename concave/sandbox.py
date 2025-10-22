@@ -183,6 +183,52 @@ class SandboxFileError(SandboxError):
     pass
 
 
+class SandboxFileExistsError(SandboxFileError):
+    def __init__(self, message: str, path: str):
+        super().__init__(message)
+        self.path = path
+
+
+class SandboxFileLockedError(SandboxFileError):
+    def __init__(self, message: str, path: str):
+        super().__init__(message)
+        self.path = path
+
+
+class SandboxFileBusyError(SandboxFileError):
+    def __init__(self, message: str, path: str):
+        super().__init__(message)
+        self.path = path
+
+
+class SandboxInsufficientStorageError(SandboxFileError):
+    def __init__(self, message: str, path: str):
+        super().__init__(message)
+        self.path = path
+
+
+class SandboxPermissionDeniedError(SandboxFileError):
+    def __init__(self, message: str, path: str):
+        super().__init__(message)
+        self.path = path
+
+
+class SandboxUnsupportedMediaTypeError(SandboxFileError):
+    def __init__(self, message: str, detail: str | None = None):
+        super().__init__(message)
+        self.detail = detail
+
+
+class SandboxChecksumMismatchError(SandboxFileError):
+    def __init__(self, message: str, path: str, expected: str, actual: str, algorithm: str, direction: str):
+        super().__init__(message)
+        self.path = path
+        self.expected = expected
+        self.actual = actual
+        self.algorithm = algorithm
+        self.direction = direction
+
+
 class SandboxFileSizeError(SandboxFileError):
     """
     Raised when file exceeds size limits.
@@ -322,6 +368,31 @@ class Sandbox:
             raise SandboxUnavailableError(f"Service unavailable: {error_msg}", status_code) from e
         else:
             raise SandboxError(f"Failed to {operation}: {error_msg}") from e
+
+    @staticmethod
+    def _raise_file_error_from_response(status_code: int, json_data: dict, default_message: str, path: str, op: str):
+        error_code = (json_data.get("error_code") or "").upper()
+        message = json_data.get("error") or default_message
+        if status_code == 404 or error_code == "FILE_NOT_FOUND":
+            raise SandboxFileNotFoundError(message, path=path, is_local=False)
+        if status_code == 409 or error_code == "FILE_EXISTS":
+            raise SandboxFileExistsError(message, path=path)
+        if status_code == 423:
+            if error_code == "FILE_BUSY":
+                raise SandboxFileBusyError(message, path=path)
+            raise SandboxFileLockedError(message, path=path)
+        if status_code == 507 or error_code == "INSUFFICIENT_STORAGE":
+            raise SandboxInsufficientStorageError(message, path=path)
+        if status_code == 403 or error_code == "PERMISSION_DENIED":
+            raise SandboxPermissionDeniedError(message, path=path)
+        if status_code == 415 or error_code == "UNSUPPORTED_MEDIA_TYPE":
+            raise SandboxUnsupportedMediaTypeError(message, json_data.get("detail"))
+        if status_code in (502, 503):
+            raise SandboxUnavailableError(message, status_code)
+        if status_code == 504:
+            raise SandboxTimeoutError(message, operation=op)
+        # Fallback
+        raise SandboxFileError(message)
 
     def __init__(
         self,
@@ -1318,7 +1389,14 @@ class Sandbox:
             **status_data
         }
 
-    def upload_file(self, local_path: str, remote_path: str, overwrite: bool = False) -> bool:
+    def upload_file(
+        self,
+        local_path: str,
+        remote_path: str,
+        overwrite: bool = False,
+        progress: Optional[callable] = None,
+        verify_checksum: bool = False,
+    ) -> bool:
         """
         Upload a file from local filesystem to the sandbox.
 
@@ -1348,8 +1426,6 @@ class Sandbox:
         Note:
             TODO: Temporary 4MB limit. Future versions will support streaming for larger files.
         """
-        import base64
-
         # Validate local file exists
         if not os.path.exists(local_path):
             raise SandboxFileNotFoundError(
@@ -1360,61 +1436,98 @@ class Sandbox:
         if not remote_path.startswith("/"):
             raise SandboxValidationError("Remote path must be absolute (start with /)")
 
-        # Check file size
-        # TODO: Temporary 4MB limit. Future versions will support streaming for larger files.
         file_size = os.path.getsize(local_path)
-        max_size = 4 * 1024 * 1024  # 4MB
-        if file_size > max_size:
-            raise SandboxFileSizeError(
-                f"File size ({file_size} bytes) exceeds maximum allowed size ({max_size} bytes). "
-                "TODO: Future versions will support streaming for larger files.",
-                max_size=max_size,
-                actual_size=file_size,
-            )
 
-        # Read and encode file
+        # Multipart streaming upload
         try:
+            import hashlib
             with open(local_path, "rb") as f:
-                content_bytes = f.read()
-            content_b64 = base64.b64encode(content_bytes).decode("utf-8")
-        except IOError as e:
-            raise SandboxFileError(f"Failed to read local file: {e}") from e
+                # Stream file with progress wrapper if provided
+                hasher = hashlib.md5() if verify_checksum else None
+                def gen():
+                    sent = 0
+                    chunk = f.read(1024 * 1024)
+                    while chunk:
+                        if hasher is not None:
+                            hasher.update(chunk)
+                        sent += len(chunk)
+                        if progress:
+                            try:
+                                progress(sent, file_size)
+                            except Exception:
+                                pass
+                        yield chunk
+                        chunk = f.read(1024 * 1024)
 
-        # Upload file
-        payload = {"path": remote_path, "content": content_b64, "overwrite": overwrite}
+                # Build multipart form manually to avoid loading file into memory
+                boundary = "concave-boundary"
+                headers = self._client.headers.copy()
+                headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
 
-        try:
-            response = self._client.put(
-                f"{self._sandboxes_url}/{self.id}/files",
-                json=payload,
-                timeout=35.0,  # Generous timeout for file operations
-            )
-            response.raise_for_status()
-            data = response.json()
+                def multipart_stream():
+                    filename = os.path.basename(local_path)
+                    preamble = (
+                        f"--{boundary}\r\n"
+                        f"Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
+                        f"Content-Type: application/octet-stream\r\n\r\n"
+                    ).encode()
+                    yield preamble
+                    for chunk in gen():
+                        yield chunk
+                    yield f"\r\n--{boundary}--\r\n".encode()
 
-            # Handle error responses
-            if "error" in data:
-                if "not found" in data["error"].lower():
-                    raise SandboxNotFoundError(f"Sandbox {self.id} not found")
-                raise SandboxFileError(f"File upload failed: {data['error']}")
-
-            # Handle file exists case (silent failure)
-            if not data.get("success", False) and data.get("exists", False):
-                return False
-
-            return data.get("success", False)
-
+                params = {"path": remote_path, "overwrite": str(overwrite).lower()}
+                url = f"{self._sandboxes_url}/{self.id}/files"
+                response = self._client.build_request("PUT", url, params=params, content=multipart_stream(), headers=headers, timeout=None)
+                resp = self._client.send(response, stream=False)
+                try:
+                    if resp.status_code != 200:
+                        # Expect JSON error envelope
+                        try:
+                            data = resp.json()
+                        except Exception:
+                            data = {"error": resp.text}
+                        self._raise_file_error_from_response(resp.status_code, data, "Upload failed", remote_path, "upload")
+                    data = resp.json()
+                    ok = bool(data.get("success", False))
+                    if not ok:
+                        return False
+                    # Optional checksum verification (remote vs local)
+                    if verify_checksum and hasher is not None:
+                        local_sum = hasher.hexdigest()
+                        verify_cmd = f"md5sum {remote_path}"
+                        result = self.execute(verify_cmd)
+                        if result.returncode != 0:
+                            raise SandboxFileError(f"Checksum verification failed: {result.stderr}")
+                        remote_sum = (result.stdout.strip().split()[0] if result.stdout else "")
+                        if not remote_sum or remote_sum.lower() != local_sum.lower():
+                            raise SandboxChecksumMismatchError(
+                                "Checksum mismatch after upload",
+                                path=remote_path,
+                                expected=local_sum,
+                                actual=remote_sum,
+                                algorithm="md5",
+                                direction="upload",
+                            )
+                    return True
+                finally:
+                    resp.close()
         except httpx.HTTPStatusError as e:
             self._handle_http_error(e, "upload file")
-
         except httpx.TimeoutException as e:
-            raise SandboxTimeoutError(
-                "File upload timed out", timeout_ms=35000, operation="upload"
-            ) from e
+            raise SandboxTimeoutError("File upload timed out", timeout_ms=None, operation="upload") from e
         except httpx.RequestError as e:
             raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
 
-    def download_file(self, remote_path: str, local_path: str, overwrite: bool = False) -> bool:
+    def download_file(
+        self,
+        remote_path: str,
+        local_path: str,
+        overwrite: bool = False,
+        progress: Optional[callable] = None,
+        verify_checksum: bool = False,
+        expected_checksum: Optional[str] = None,
+    ) -> bool:
         """
         Download a file from the sandbox to local filesystem.
 
@@ -1443,8 +1556,6 @@ class Sandbox:
         Note:
             TODO: Temporary 4MB limit. Future versions will support streaming for larger files.
         """
-        import base64
-
         # Validate remote path is absolute
         if not remote_path.startswith("/"):
             raise SandboxValidationError("Remote path must be absolute (start with /)")
@@ -1458,48 +1569,60 @@ class Sandbox:
         if local_dir:
             os.makedirs(local_dir, exist_ok=True)
 
-        # Download file
+        # Stream download
         try:
-            response = self._client.get(
+            import hashlib
+            with self._client.stream(
+                "GET",
                 f"{self._sandboxes_url}/{self.id}/files",
                 params={"path": remote_path},
-                timeout=35.0,  # Generous timeout for file operations
-            )
-            response.raise_for_status()
-            data = response.json()
+                timeout=None,
+            ) as resp:
+                if resp.status_code != 200:
+                    # Read the response body from the streaming response first
+                    raw = resp.read()
+                    # Try to parse JSON; otherwise, include plain text error
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        try:
+                            text = raw.decode("utf-8", errors="replace")
+                        except Exception:
+                            text = ""
+                        data = {"error": text}
+                    self._raise_file_error_from_response(resp.status_code, data, "Download failed", remote_path, "download")
 
-            # Handle error responses
-            if "error" in data:
-                if "not found" in data["error"].lower():
-                    if "sandbox" in data["error"].lower():
-                        raise SandboxNotFoundError(f"Sandbox {self.id} not found")
-                    else:
-                        raise SandboxFileNotFoundError(
-                            f"Remote file not found: {remote_path}",
-                            path=remote_path,
-                            is_local=False,
-                        )
-                raise SandboxFileError(f"File download failed: {data['error']}")
-
-            # Decode and write file
-            if "content" not in data:
-                raise SandboxInvalidResponseError("Response missing 'content' field")
-
-            try:
-                content_bytes = base64.b64decode(data["content"])
+                total = 0
+                hasher = hashlib.md5() if verify_checksum else None
+                os.makedirs(os.path.dirname(local_path) or ".", exist_ok=True)
                 with open(local_path, "wb") as f:
-                    f.write(content_bytes)
+                    for chunk in resp.iter_bytes(1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
+                            total += len(chunk)
+                            if hasher is not None:
+                                hasher.update(chunk)
+                            if progress:
+                                try:
+                                    progress(total, None)
+                                except Exception:
+                                    pass
+                if verify_checksum and hasher is not None:
+                    actual_sum = hasher.hexdigest()
+                    if expected_checksum and actual_sum.lower() != expected_checksum.lower():
+                        raise SandboxChecksumMismatchError(
+                            "Checksum mismatch after download",
+                            path=remote_path,
+                            expected=expected_checksum,
+                            actual=actual_sum,
+                            algorithm="md5",
+                            direction="download",
+                        )
                 return True
-            except (IOError, OSError) as e:
-                raise SandboxFileError(f"Failed to write local file: {e}") from e
-
         except httpx.HTTPStatusError as e:
             self._handle_http_error(e, "download file")
-
         except httpx.TimeoutException as e:
-            raise SandboxTimeoutError(
-                "File download timed out", timeout_ms=35000, operation="download"
-            ) from e
+            raise SandboxTimeoutError("File download timed out", timeout_ms=None, operation="download") from e
         except httpx.RequestError as e:
             raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
 
