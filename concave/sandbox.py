@@ -1509,6 +1509,218 @@ class Sandbox:
         except httpx.RequestError as e:
             raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
 
+    def read_file(self, path: str, encoding: str = "utf-8") -> str:
+        """
+        Read a file from the sandbox and return its content as a string.
+        
+        This is a simple, non-streaming operation with a 4MB file size limit.
+        For larger files, use download_file() instead.
+        
+        Args:
+            path: Absolute path in the sandbox to read from (must start with /)
+            encoding: Text encoding to use (default: "utf-8")
+        
+        Returns:
+            String containing the file content
+        
+        Raises:
+            SandboxFileNotFoundError: If the file doesn't exist
+            SandboxValidationError: If path is not absolute or file exceeds 4MB
+            SandboxNotFoundError: If sandbox is not found
+            SandboxTimeoutError: If operation times out
+            SandboxFileError: If read fails for other reasons
+        
+        Example:
+            # Read a text file
+            content = sbx.read_file("/tmp/data.txt")
+            print(content)
+            
+            # Read with specific encoding
+            content = sbx.read_file("/tmp/file.txt", encoding="latin-1")
+        
+        Note:
+            Binary files are also returned as strings. The content is base64-decoded
+            internally and then decoded using the specified encoding. For binary files,
+            you may need to re-encode the string to bytes.
+        """
+        # Validate path is absolute
+        if not path.startswith("/"):
+            raise SandboxValidationError("Path must be absolute (start with /)")
+        
+        try:
+            import base64
+            
+            # Prepare request
+            payload = {"path": path, "encoding": encoding}
+            
+            response = self._client.post(
+                f"{self._sandboxes_url}/{self.id}/read_file",
+                json=payload,
+                timeout=35.0,
+            )
+            
+            if response.status_code != 200:
+                # Parse error response
+                try:
+                    data = response.json()
+                except Exception:
+                    data = {"error": response.text}
+                
+                error_code = (data.get("error_code") or "").upper()
+                message = data.get("error") or "Read file failed"
+                
+                # Raise specific exceptions based on error code
+                if response.status_code == 404 or error_code == "FILE_NOT_FOUND":
+                    raise SandboxFileNotFoundError(message, path=path, is_local=False)
+                if response.status_code == 413 or error_code == "FILE_TOO_LARGE":
+                    raise SandboxValidationError(message)
+                if response.status_code == 403 or error_code == "PERMISSION_DENIED":
+                    raise SandboxPermissionDeniedError(message, path=path)
+                if response.status_code in (502, 503):
+                    raise SandboxUnavailableError(message, response.status_code)
+                if response.status_code == 504:
+                    raise SandboxTimeoutError(message, operation="read_file")
+                
+                # Fallback
+                raise SandboxFileError(message)
+            
+            data = response.json()
+            
+            # Decode base64 content
+            content_b64 = data.get("content", "")
+            if not content_b64:
+                raise SandboxInvalidResponseError("Response missing 'content' field")
+            
+            try:
+                file_bytes = base64.b64decode(content_b64)
+                # Decode bytes to string using specified encoding
+                return file_bytes.decode(encoding)
+            except Exception as e:
+                raise SandboxFileError(f"Failed to decode file content: {e}")
+                
+        except httpx.HTTPStatusError as e:
+            self._handle_http_error(e, "read file")
+        except httpx.TimeoutException as e:
+            raise SandboxTimeoutError("File read timed out", timeout_ms=35000, operation="read_file") from e
+        except httpx.RequestError as e:
+            raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
+
+    def write_file(
+        self,
+        path: str,
+        content: str,
+        overwrite: bool = False,
+        encoding: str = "utf-8",
+    ) -> bool:
+        """
+        Write a string to a file in the sandbox.
+        
+        This is a simple, non-streaming operation with a 4MB content size limit.
+        For larger files, use upload_file() instead.
+        
+        Args:
+            path: Absolute path in the sandbox where file should be written (must start with /)
+            content: String content to write to the file
+            overwrite: If False (default), raises error if file exists. If True, overwrites existing file.
+            encoding: Text encoding to use (default: "utf-8")
+        
+        Returns:
+            True if write was successful
+        
+        Raises:
+            SandboxFileExistsError: If file already exists and overwrite=False
+            SandboxValidationError: If path is not absolute or content exceeds 4MB
+            SandboxNotFoundError: If sandbox is not found
+            SandboxTimeoutError: If operation times out
+            SandboxFileError: If write fails for other reasons
+        
+        Example:
+            # Write a text file
+            sbx.write_file("/tmp/output.txt", "Hello, World!")
+            
+            # Overwrite existing file
+            sbx.write_file("/tmp/data.json", '{"key": "value"}', overwrite=True)
+            
+            # Write with specific encoding
+            sbx.write_file("/tmp/file.txt", "Héllo", encoding="latin-1")
+        
+        Note:
+            The content is encoded using the specified encoding and then base64-encoded
+            for transmission. Binary data can be written by encoding it as a string first.
+        """
+        # Validate path is absolute
+        if not path.startswith("/"):
+            raise SandboxValidationError("Path must be absolute (start with /)")
+        
+        try:
+            import base64
+            
+            # Encode string to bytes using specified encoding
+            try:
+                content_bytes = content.encode(encoding)
+            except Exception as e:
+                raise SandboxValidationError(f"Failed to encode content with {encoding}: {e}")
+            
+            # Check size limit (4MB)
+            if len(content_bytes) > 4 * 1024 * 1024:
+                raise SandboxValidationError(
+                    f"Content size ({len(content_bytes)} bytes) exceeds 4MB limit. Use upload_file() for larger files."
+                )
+            
+            # Base64 encode
+            content_b64 = base64.b64encode(content_bytes).decode("ascii")
+            
+            # Prepare request
+            payload = {
+                "path": path,
+                "content": content_b64,
+                "overwrite": overwrite,
+                "encoding": encoding,
+            }
+            
+            response = self._client.post(
+                f"{self._sandboxes_url}/{self.id}/write_file",
+                json=payload,
+                timeout=35.0,
+            )
+            
+            if response.status_code != 200:
+                # Parse error response
+                try:
+                    data = response.json()
+                except Exception:
+                    data = {"error": response.text}
+                
+                error_code = (data.get("error_code") or "").upper()
+                message = data.get("error") or "Write file failed"
+                
+                # Raise specific exceptions based on error code
+                if response.status_code == 409 or error_code == "FILE_EXISTS":
+                    raise SandboxFileExistsError(message, path=path)
+                if response.status_code == 413 or error_code == "CONTENT_TOO_LARGE":
+                    raise SandboxValidationError(message)
+                if response.status_code == 403 or error_code == "PERMISSION_DENIED":
+                    raise SandboxPermissionDeniedError(message, path=path)
+                if response.status_code == 507 or error_code == "INSUFFICIENT_STORAGE":
+                    raise SandboxInsufficientStorageError(message, path=path)
+                if response.status_code in (502, 503):
+                    raise SandboxUnavailableError(message, response.status_code)
+                if response.status_code == 504:
+                    raise SandboxTimeoutError(message, operation="write_file")
+                
+                # Fallback
+                raise SandboxFileError(message)
+            
+            data = response.json()
+            return bool(data.get("success", False))
+                
+        except httpx.HTTPStatusError as e:
+            self._handle_http_error(e, "write file")
+        except httpx.TimeoutException as e:
+            raise SandboxTimeoutError("File write timed out", timeout_ms=35000, operation="write_file") from e
+        except httpx.RequestError as e:
+            raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
+
     def download_file(
         self,
         remote_path: str,
