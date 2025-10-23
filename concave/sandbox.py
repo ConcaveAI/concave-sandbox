@@ -229,19 +229,7 @@ class SandboxChecksumMismatchError(SandboxFileError):
         self.direction = direction
 
 
-class SandboxFileSizeError(SandboxFileError):
-    """
-    Raised when file exceeds size limits.
-
-    Attributes:
-        max_size: Maximum allowed file size in bytes
-        actual_size: Actual file size in bytes
-    """
-
-    def __init__(self, message: str, max_size: int, actual_size: int):
-        super().__init__(message)
-        self.max_size = max_size
-        self.actual_size = actual_size
+# NOTE: Historically used for fixed-size limits; no longer applicable with streaming.
 
 
 class SandboxFileNotFoundError(SandboxFileError):
@@ -1404,13 +1392,15 @@ class Sandbox:
             local_path: Path to the local file to upload
             remote_path: Absolute path in the sandbox where file should be stored (must start with /)
             overwrite: If False (default), returns False when remote file exists. If True, overwrites existing file.
+            progress: Optional callback function(bytes_sent) for upload progress tracking
+            verify_checksum: If True, verifies MD5 checksum after upload completes
 
         Returns:
-            True if upload was successful, False if file exists and overwrite=False
+            True if upload was successful
 
         Raises:
             SandboxFileNotFoundError: If local file doesn't exist
-            SandboxFileSizeError: If file exceeds 4MB limit
+            SandboxFileExistsError: If remote file already exists and overwrite=False
             SandboxValidationError: If remote_path is not absolute
             SandboxNotFoundError: If sandbox is not found
             SandboxTimeoutError: If upload times out
@@ -1424,7 +1414,9 @@ class Sandbox:
             sbx.upload_file("./data.json", "/home/user/data.json", overwrite=True)
 
         Note:
-            TODO: Temporary 4MB limit. Future versions will support streaming for larger files.
+            Uploads use streaming multipart transfer and support large files. Progress can be
+            tracked via the optional progress callback, and integrity can be verified via
+            verify_checksum=True.
         """
         # Validate local file exists
         if not os.path.exists(local_path):
@@ -1435,8 +1427,6 @@ class Sandbox:
         # Validate remote path is absolute
         if not remote_path.startswith("/"):
             raise SandboxValidationError("Remote path must be absolute (start with /)")
-
-        file_size = os.path.getsize(local_path)
 
         # Multipart streaming upload
         try:
@@ -1453,7 +1443,7 @@ class Sandbox:
                         sent += len(chunk)
                         if progress:
                             try:
-                                progress(sent, file_size)
+                                progress(sent)
                             except Exception:
                                 pass
                         yield chunk
@@ -1526,7 +1516,6 @@ class Sandbox:
         overwrite: bool = False,
         progress: Optional[callable] = None,
         verify_checksum: bool = False,
-        expected_checksum: Optional[str] = None,
     ) -> bool:
         """
         Download a file from the sandbox to local filesystem.
@@ -1535,12 +1524,15 @@ class Sandbox:
             remote_path: Absolute path in the sandbox to download from (must start with /)
             local_path: Path on local filesystem where file should be saved
             overwrite: If False (default), returns False when local file exists. If True, overwrites existing file.
+            progress: Optional callback function(bytes_downloaded) for download progress tracking
+            verify_checksum: If True, calculates remote MD5 first, then verifies downloaded file matches
 
         Returns:
-            True if download was successful, False if file exists and overwrite=False
+            True if download was successful
 
         Raises:
             SandboxFileNotFoundError: If remote file doesn't exist
+            SandboxFileExistsError: If local file already exists and overwrite=False
             SandboxValidationError: If remote_path is not absolute
             SandboxNotFoundError: If sandbox is not found
             SandboxTimeoutError: If download times out
@@ -1552,9 +1544,14 @@ class Sandbox:
             
             # Download and overwrite if exists
             sbx.download_file("/home/user/data.csv", "./data.csv", overwrite=True)
+            
+            # Download with checksum verification
+            sbx.download_file("/tmp/data.bin", "./data.bin", verify_checksum=True)
 
         Note:
-            TODO: Temporary 4MB limit. Future versions will support streaming for larger files.
+            When verify_checksum=True, the remote file's MD5 is calculated first via execute(),
+            then the file is downloaded and verified locally against that checksum. If the
+            checksums do not match, a SandboxChecksumMismatchError is raised.
         """
         # Validate remote path is absolute
         if not remote_path.startswith("/"):
@@ -1562,12 +1559,26 @@ class Sandbox:
 
         # Check if local file exists and overwrite is disabled
         if os.path.exists(local_path) and not overwrite:
-            return False
+            raise SandboxFileExistsError(
+                f"Local file already exists: {local_path}", path=local_path
+            )
 
         # Create parent directory if needed
         local_dir = os.path.dirname(local_path)
         if local_dir:
             os.makedirs(local_dir, exist_ok=True)
+
+        # If checksum verification requested, calculate remote checksum FIRST
+        expected_checksum = None
+        if verify_checksum:
+            verify_cmd = f"md5sum {remote_path}"
+            result = self.execute(verify_cmd)
+            if result.returncode != 0:
+                # md5sum failed - likely file doesn't exist or permission denied
+                raise SandboxFileError(f"Failed to calculate remote checksum: {result.stderr}")
+            expected_checksum = result.stdout.strip().split()[0] if result.stdout else ""
+            if not expected_checksum:
+                raise SandboxFileError("Failed to parse remote checksum from md5sum output")
 
         # Stream download
         try:
@@ -1604,12 +1615,14 @@ class Sandbox:
                                 hasher.update(chunk)
                             if progress:
                                 try:
-                                    progress(total, None)
+                                    progress(total)
                                 except Exception:
                                     pass
+                
+                # Verify checksum if requested
                 if verify_checksum and hasher is not None:
                     actual_sum = hasher.hexdigest()
-                    if expected_checksum and actual_sum.lower() != expected_checksum.lower():
+                    if actual_sum.lower() != expected_checksum.lower():
                         raise SandboxChecksumMismatchError(
                             "Checksum mismatch after download",
                             path=remote_path,
