@@ -503,7 +503,10 @@ class Sandbox:
 
     @classmethod
     def create(
-        cls, internet_access: bool = True, metadata: Optional[dict[str, str]] = None
+        cls, 
+        internet_access: bool = True, 
+        metadata: Optional[dict[str, str]] = None,
+        env: Optional[dict[str, str]] = None
     ) -> "Sandbox":
         """
         Create a new sandbox instance.
@@ -511,19 +514,21 @@ class Sandbox:
         Args:
             internet_access: Enable internet access for the sandbox (default: True)
             metadata: Optional immutable metadata to attach (key-value pairs)
+            env: Optional custom environment variables to inject into the sandbox
 
         Returns:
             A new Sandbox instance ready for code execution
 
         Raises:
             SandboxCreationError: If sandbox creation fails
-            SandboxValidationError: If metadata validation fails
+            SandboxValidationError: If metadata or env validation fails
             ValueError: If CONCAVE_SANDBOX_API_KEY environment variable is not set
 
         Example:
             sbx = Sandbox.create()
             sbx_no_internet = Sandbox.create(internet_access=False)
             sbx_with_meta = Sandbox.create(metadata={"env": "prod", "user": "123"})
+            sbx_with_env = Sandbox.create(env={"API_KEY": "secret", "DEBUG": "true"})
         """
         # Get credentials using helper method
         base_url, api_key = cls._get_credentials(None, None)
@@ -561,6 +566,39 @@ class Sandbox:
             if total_size > 4096:
                 raise SandboxValidationError(f"total metadata size ({total_size} bytes) exceeds limit of 4096 bytes")
 
+        # Validate env if provided
+        if env is not None:
+            import re
+            
+            # Validate key count
+            if len(env) > 32:
+                raise SandboxValidationError("env cannot have more than 32 keys")
+            
+            # Validate keys and values (Linux env var naming rules)
+            total_size = 0
+            key_regex = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+            for key, value in env.items():
+                # Validate key
+                if not isinstance(key, str) or len(key) < 1 or len(key) > 64:
+                    raise SandboxValidationError(f"env key '{key}' must be a string between 1 and 64 characters")
+                if not key_regex.match(key):
+                    raise SandboxValidationError(f"env key '{key}' contains invalid characters (must start with letter or underscore, followed by alphanumeric or underscore)")
+                
+                # Validate value
+                if not isinstance(value, str):
+                    raise SandboxValidationError(f"env value for key '{key}' must be a string")
+                value_bytes = len(value.encode('utf-8'))
+                if value_bytes > 1024:
+                    raise SandboxValidationError(f"env value for key '{key}' exceeds 1024 bytes")
+                if '\x00' in value:
+                    raise SandboxValidationError(f"env value for key '{key}' contains NUL byte")
+                
+                total_size += len(key.encode('utf-8')) + value_bytes
+            
+            # Validate total size
+            if total_size > 4096:
+                raise SandboxValidationError(f"total env size ({total_size} bytes) exceeds limit of 4096 bytes")
+
         # Create HTTP client using helper method
         client = cls._create_http_client(api_key)
 
@@ -570,6 +608,8 @@ class Sandbox:
             payload = {"internet_access": internet_access}
             if metadata:
                 payload["metadata"] = metadata
+            if env:
+                payload["env"] = env
             response = client.put(f"{base}/api/v1/sandboxes", json=payload)
             response.raise_for_status()
             sandbox_data = response.json()
@@ -1866,7 +1906,11 @@ class Sandbox:
 
 
 @contextmanager
-def sandbox(internet_access: bool = True, metadata: Optional[dict[str, str]] = None):
+def sandbox(
+    internet_access: bool = True, 
+    metadata: Optional[dict[str, str]] = None,
+    env: Optional[dict[str, str]] = None
+):
     """
     Context manager for creating and automatically cleaning up a sandbox.
 
@@ -1876,13 +1920,14 @@ def sandbox(internet_access: bool = True, metadata: Optional[dict[str, str]] = N
     Args:
         internet_access: Enable internet access for the sandbox (default: True)
         metadata: Optional immutable metadata to attach (key-value pairs)
+        env: Optional custom environment variables to inject into the sandbox
 
     Yields:
         Sandbox: A sandbox instance ready for code execution
 
     Raises:
         SandboxCreationError: If sandbox creation fails
-        SandboxValidationError: If metadata validation fails
+        SandboxValidationError: If metadata or env validation fails
         ValueError: If CONCAVE_SANDBOX_API_KEY environment variable is not set
 
     Example:
@@ -1903,9 +1948,14 @@ def sandbox(internet_access: bool = True, metadata: Optional[dict[str, str]] = N
         with sandbox(metadata={"env": "prod", "user": "123"}) as s:
             result = s.run("print('Tracked sandbox!')")
             print(result.stdout)
+        
+        # Create sandbox with custom env vars
+        with sandbox(env={"API_KEY": "secret", "DEBUG": "true"}) as s:
+            result = s.run("import os; print(os.environ['API_KEY'])")
+            print(result.stdout)
         ```
     """
-    sbx = Sandbox.create(internet_access=internet_access, metadata=metadata)
+    sbx = Sandbox.create(internet_access=internet_access, metadata=metadata, env=env)
     try:
         yield sbx
     finally:
