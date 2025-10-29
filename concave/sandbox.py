@@ -10,7 +10,8 @@ import os
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Callable, List
+import json
 
 import httpx
 
@@ -1063,7 +1064,13 @@ class Sandbox:
         finally:
             client.close()
 
-    def execute(self, command: str, timeout: Optional[int] = None) -> ExecuteResult:
+    def execute(
+        self,
+        command: str,
+        timeout: Optional[int] = None,
+        streaming: bool = False,
+        callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> ExecuteResult:
         """
         Execute a shell command in the sandbox.
 
@@ -1087,47 +1094,143 @@ class Sandbox:
         if not command.strip():
             raise SandboxValidationError("Command cannot be empty")
 
-        # Default timeout to 10000ms (10 seconds) if not specified
-        if timeout is None:
-            timeout = 10000
+        # Non-streaming path (JSON response)
+        if not streaming:
+            # Default timeout to 10000ms (10 seconds) if not specified
+            if timeout is None:
+                timeout = 10000
 
-        # Prepare request payload
-        payload = {"command": command, "timeout": timeout}
+            # Prepare request payload
+            payload = {"command": command, "timeout": timeout}
+
+            # Set per-request timeout (ms to seconds + buffer)
+            request_timeout = 12.0  # default: 10s + 2s buffer
+            if timeout is not None and timeout > 0:
+                request_timeout = (timeout / 1000.0) + 2.0
+
+            try:
+                response = self._client.post(
+                    f"{self._sandboxes_url}/{self.id}/exec",
+                    json=payload,
+                    timeout=request_timeout,
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                # Handle error responses from the service
+                if "error" in data:
+                    if "sandbox not found" in data["error"].lower():
+                        raise SandboxNotFoundError(f"Sandbox {self.id} not found")
+                    raise SandboxExecutionError(f"Execution failed: {data['error']}")
+
+                return ExecuteResult(
+                    stdout=data.get("stdout", ""),
+                    stderr=data.get("stderr", ""),
+                    returncode=data.get("returncode", -1),
+                    command=command,
+                )
+
+            except httpx.HTTPStatusError as e:
+                self._handle_http_error(e, "execute command")
+
+            except httpx.TimeoutException as e:
+                timeout_val = timeout if timeout else 10000
+                raise SandboxTimeoutError(
+                    "Command execution timed out", timeout_ms=timeout_val, operation="execute"
+                ) from e
+            except httpx.RequestError as e:
+                raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
+
+        # Streaming path (NDJSON events)
+        # Default timeout to 300000ms (5 minutes) if not specified
+        if timeout is None:
+            timeout = 300000
+
+        payload = {"command": command, "timeout": int(timeout / 1000)}
 
         # Set per-request timeout (ms to seconds + buffer)
-        request_timeout = 12.0  # default: 10s + 2s buffer
+        request_timeout = None
         if timeout is not None and timeout > 0:
             request_timeout = (timeout / 1000.0) + 2.0
 
         try:
-            response = self._client.post(
-                f"{self._sandboxes_url}/{self.id}/exec",
+            stdout_parts: List[str] = []
+            stderr_parts: List[str] = []
+            exit_code: Optional[int] = None
+
+            with self._client.stream(
+                "POST",
+                f"{self._sandboxes_url}/{self.id}/execute_stream",
                 json=payload,
                 timeout=request_timeout,
-            )
-            response.raise_for_status()
-            data = response.json()
+            ) as resp:
+                if resp.status_code != 200:
+                    raw = resp.read()
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        try:
+                            text = raw.decode("utf-8", errors="replace")
+                        except Exception:
+                            text = ""
+                        data = {"error": text}
+                    # Raise appropriate error based on response
+                    error_msg = data.get("error") if isinstance(data, dict) else None
+                    if isinstance(error_msg, str) and "sandbox not found" in error_msg.lower():
+                        raise SandboxNotFoundError(f"Sandbox {self.id} not found")
+                    raise SandboxExecutionError(
+                        f"Execute streaming failed: {error_msg if error_msg else raw.decode('utf-8', errors='replace')}"
+                    )
 
-            # Handle error responses from the service
-            if "error" in data:
-                if "sandbox not found" in data["error"].lower():
-                    raise SandboxNotFoundError(f"Sandbox {self.id} not found")
-                raise SandboxExecutionError(f"Execution failed: {data['error']}")
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except Exception:
+                        continue
+                    etype = event.get("type")
+                    if etype == "stdout":
+                        data = event.get("data", "")
+                        stdout_parts.append(data + "\n")
+                        if callback:
+                            try:
+                                callback(event)
+                            except Exception:
+                                pass
+                    elif etype == "stderr":
+                        data = event.get("data", "")
+                        stderr_parts.append(data + "\n")
+                        if callback:
+                            try:
+                                callback(event)
+                            except Exception:
+                                pass
+                    elif etype == "exit":
+                        try:
+                            exit_code = int(event.get("code", -1))
+                        except Exception:
+                            exit_code = -1
+                        if callback:
+                            try:
+                                callback(event)
+                            except Exception:
+                                pass
+                        break
 
             return ExecuteResult(
-                stdout=data.get("stdout", ""),
-                stderr=data.get("stderr", ""),
-                returncode=data.get("returncode", -1),
+                stdout="".join(stdout_parts),
+                stderr="".join(stderr_parts),
+                returncode=exit_code if exit_code is not None else -1,
                 command=command,
             )
 
         except httpx.HTTPStatusError as e:
-            self._handle_http_error(e, "execute command")
-
+            self._handle_http_error(e, "execute command (streaming)")
         except httpx.TimeoutException as e:
-            timeout_val = timeout if timeout else 10000
+            timeout_val = timeout if timeout else 300000
             raise SandboxTimeoutError(
-                "Command execution timed out", timeout_ms=timeout_val, operation="execute"
+                "Command execution timed out", timeout_ms=timeout_val, operation="execute_stream"
             ) from e
         except httpx.RequestError as e:
             raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
