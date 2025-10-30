@@ -1587,6 +1587,100 @@ class Sandbox:
         except httpx.RequestError as e:
             raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
 
+    def pause(self) -> Dict[str, Any]:
+        """
+        Pause the sandbox VM execution.
+
+        When paused, the Firecracker VM freezes in memory but the process stays alive.
+        Memory remains allocated and the sandbox still counts toward concurrency limits.
+        Only CPU execution is frozen.
+
+        Returns:
+            Dictionary containing:
+            - sandbox_id: Sandbox identifier
+            - paused: True
+            - paused_at: Timestamp when paused
+
+        Raises:
+            SandboxNotFoundError: If the sandbox is not found
+            SandboxClientError: If sandbox is already paused (409 Conflict)
+            SandboxAuthenticationError: If authentication fails
+            SandboxUnavailableError: If the sandbox is unavailable
+            SandboxTimeoutError: If the pause request times out
+
+        Example:
+            sbx.pause()
+            print("Sandbox paused - VM frozen but process still alive")
+            # Later...
+            sbx.resume()
+        """
+        try:
+            response = self._client.post(
+                f"{self._sandboxes_url}/{self.id}/pause",
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            return response.json()
+
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code
+            if status_code == 409:
+                raise SandboxClientError("Sandbox is already paused") from e
+            self._handle_http_error(e, "pause")
+
+        except httpx.TimeoutException as e:
+            raise SandboxTimeoutError(
+                "Pause request timed out", timeout_ms=10000, operation="pause"
+            ) from e
+        except httpx.RequestError as e:
+            raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
+
+    def resume(self) -> Dict[str, Any]:
+        """
+        Resume a paused sandbox VM execution.
+
+        Resumes a previously paused sandbox, allowing it to continue execution
+        from where it left off.
+
+        Returns:
+            Dictionary containing:
+            - sandbox_id: Sandbox identifier
+            - paused: False
+
+        Raises:
+            SandboxNotFoundError: If the sandbox is not found
+            SandboxClientError: If sandbox is not paused (409 Conflict)
+            SandboxAuthenticationError: If authentication fails
+            SandboxUnavailableError: If the sandbox is unavailable
+            SandboxTimeoutError: If the resume request times out
+
+        Example:
+            sbx.pause()
+            # Do something else...
+            sbx.resume()
+            # Sandbox continues from where it left off
+        """
+        try:
+            response = self._client.post(
+                f"{self._sandboxes_url}/{self.id}/resume",
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            return response.json()
+
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code
+            if status_code == 409:
+                raise SandboxClientError("Sandbox is not paused") from e
+            self._handle_http_error(e, "resume")
+
+        except httpx.TimeoutException as e:
+            raise SandboxTimeoutError(
+                "Resume request timed out", timeout_ms=10000, operation="resume"
+            ) from e
+        except httpx.RequestError as e:
+            raise SandboxConnectionError(f"Failed to connect to sandbox service: {e}") from e
+
     @property
     def info(self) -> Dict[str, Any]:
         """
