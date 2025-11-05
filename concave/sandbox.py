@@ -507,7 +507,8 @@ class Sandbox:
         cls, 
         internet_access: bool = True, 
         metadata: Optional[dict[str, str]] = None,
-        env: Optional[dict[str, str]] = None
+        env: Optional[dict[str, str]] = None,
+        lifetime: Optional[str] = None
     ) -> "Sandbox":
         """
         Create a new sandbox instance.
@@ -516,13 +517,15 @@ class Sandbox:
             internet_access: Enable internet access for the sandbox (default: True)
             metadata: Optional immutable metadata to attach (key-value pairs)
             env: Optional custom environment variables to inject into the sandbox
+            lifetime: Optional sandbox lifetime (e.g., "1h", "30m", "1h30m"). 
+                     Min: 1m, Max: 48h, Default: 24h
 
         Returns:
             A new Sandbox instance ready for code execution
 
         Raises:
             SandboxCreationError: If sandbox creation fails
-            SandboxValidationError: If metadata or env validation fails
+            SandboxValidationError: If metadata, env, or lifetime validation fails
             ValueError: If CONCAVE_SANDBOX_API_KEY environment variable is not set
 
         Example:
@@ -530,6 +533,8 @@ class Sandbox:
             sbx_no_internet = Sandbox.create(internet_access=False)
             sbx_with_meta = Sandbox.create(metadata={"env": "prod", "user": "123"})
             sbx_with_env = Sandbox.create(env={"API_KEY": "secret", "DEBUG": "true"})
+            sbx_short_lived = Sandbox.create(lifetime="1h")
+            sbx_long_lived = Sandbox.create(lifetime="48h")
         """
         # Get credentials using helper method
         base_url, api_key = cls._get_credentials(None, None)
@@ -600,6 +605,23 @@ class Sandbox:
             if total_size > 4096:
                 raise SandboxValidationError(f"total env size ({total_size} bytes) exceeds limit of 4096 bytes")
 
+        # Validate lifetime if provided
+        if lifetime is not None:
+            import re
+            
+            if not isinstance(lifetime, str):
+                raise SandboxValidationError("lifetime must be a string")
+            
+            # Validate format: must match pattern like "1h", "30m", "1h30m", "90s"
+            # Pattern: optional hours, optional minutes, optional seconds (at least one required)
+            lifetime_regex = re.compile(r'^((\d+h)?(\d+m)?(\d+s)?|(\d+h\d+m\d+s)|(\d+h\d+m)|(\d+h\d+s)|(\d+m\d+s))$')
+            if not lifetime_regex.match(lifetime) or lifetime == "":
+                raise SandboxValidationError(f"lifetime '{lifetime}' has invalid format (use formats like '1h', '30m', '1h30m', '90s')")
+            
+            # Check if it contains at least one time component
+            if not any(c in lifetime for c in ['h', 'm', 's']):
+                raise SandboxValidationError(f"lifetime '{lifetime}' must contain at least one time unit (h, m, or s)")
+
         # Create HTTP client using helper method
         client = cls._create_http_client(api_key)
 
@@ -611,6 +633,8 @@ class Sandbox:
                 payload["metadata"] = metadata
             if env:
                 payload["env"] = env
+            if lifetime:
+                payload["lifetime"] = lifetime
             response = client.put(f"{base}/api/v1/sandboxes", json=payload)
             response.raise_for_status()
             sandbox_data = response.json()
@@ -2333,7 +2357,8 @@ class Sandbox:
 def sandbox(
     internet_access: bool = True, 
     metadata: Optional[dict[str, str]] = None,
-    env: Optional[dict[str, str]] = None
+    env: Optional[dict[str, str]] = None,
+    lifetime: Optional[str] = None
 ):
     """
     Context manager for creating and automatically cleaning up a sandbox.
@@ -2345,13 +2370,15 @@ def sandbox(
         internet_access: Enable internet access for the sandbox (default: True)
         metadata: Optional immutable metadata to attach (key-value pairs)
         env: Optional custom environment variables to inject into the sandbox
+        lifetime: Optional sandbox lifetime (e.g., "1h", "30m", "1h30m"). 
+                 Min: 1m, Max: 48h, Default: 24h
 
     Yields:
         Sandbox: A sandbox instance ready for code execution
 
     Raises:
         SandboxCreationError: If sandbox creation fails
-        SandboxValidationError: If metadata or env validation fails
+        SandboxValidationError: If metadata, env, or lifetime validation fails
         ValueError: If CONCAVE_SANDBOX_API_KEY environment variable is not set
 
     Example:
@@ -2377,9 +2404,14 @@ def sandbox(
         with sandbox(env={"API_KEY": "secret", "DEBUG": "true"}) as s:
             result = s.run("import os; print(os.environ['API_KEY'])")
             print(result.stdout)
+        
+        # Create sandbox with custom lifetime
+        with sandbox(lifetime="5h") as s:
+            result = s.run("print('This sandbox lives for 5 hours!')")
+            print(result.stdout)
         ```
     """
-    sbx = Sandbox.create(internet_access=internet_access, metadata=metadata, env=env)
+    sbx = Sandbox.create(internet_access=internet_access, metadata=metadata, env=env, lifetime=lifetime)
     try:
         yield sbx
     finally:
