@@ -349,6 +349,9 @@ class Sandbox:
             raise SandboxAuthenticationError(f"Authentication failed: {error_msg}") from e
         elif status_code == 404:
             raise SandboxNotFoundError(f"Not found: {error_msg}") from e
+        elif status_code == 408:
+            # Request timeout from backend
+            raise SandboxTimeoutError(f"Operation timed out: {error_msg}", timeout_ms=None, operation=operation) from e
         elif status_code == 429:
             raise SandboxRateLimitError(f"Rate limit exceeded: {error_msg}") from e
         elif status_code == 500:
@@ -1202,6 +1205,14 @@ class Sandbox:
                     error_msg = data.get("error") if isinstance(data, dict) else None
                     if isinstance(error_msg, str) and "sandbox not found" in error_msg.lower():
                         raise SandboxNotFoundError(f"Sandbox {self.id} not found")
+                    # Handle timeout responses (408 Request Timeout)
+                    if resp.status_code == 408:
+                        timeout_val = timeout if timeout else 300000
+                        raise SandboxTimeoutError(
+                            f"Command execution timed out: {error_msg if error_msg else 'timeout'}",
+                            timeout_ms=timeout_val,
+                            operation="execute_stream"
+                        )
                     raise SandboxExecutionError(
                         f"Execute streaming failed: {error_msg if error_msg else raw.decode('utf-8', errors='replace')}"
                     )
@@ -1383,6 +1394,14 @@ class Sandbox:
                     error_msg = data.get("error") if isinstance(data, dict) else None
                     if isinstance(error_msg, str) and "sandbox not found" in error_msg.lower():
                         raise SandboxNotFoundError(f"Sandbox {self.id} not found")
+                    # Handle timeout responses (408 Request Timeout)
+                    if resp.status_code == 408:
+                        timeout_val = timeout if timeout else 300000
+                        raise SandboxTimeoutError(
+                            f"Code execution timed out: {error_msg if error_msg else 'timeout'}",
+                            timeout_ms=timeout_val,
+                            operation="run_stream"
+                        )
                     raise SandboxExecutionError(
                         f"Run streaming failed: {error_msg if error_msg else raw.decode('utf-8', errors='replace')}"
                     )
