@@ -46,7 +46,7 @@ class RunResult:
         stderr: Standard error from the code execution
         returncode: Exit code from the code execution (0 = success)
         code: The original code that was executed
-        language: The language that was executed (currently only python)
+        language: The language that was executed (python or javascript)
     """
 
     stdout: str
@@ -267,7 +267,7 @@ class Sandbox:
     Main interface for interacting with the Concave sandbox service.
 
     This class manages the lifecycle of isolated code execution environments,
-    providing methods to create, execute commands, run Python code, and clean up
+    providing methods to create, execute commands, run Python and JavaScript code, and clean up
     sandbox instances. Each sandbox is backed by a Firecracker VM for strong
     isolation while maintaining fast performance.
 
@@ -1284,7 +1284,7 @@ class Sandbox:
         Args:
             code: Code to execute
             timeout: Timeout in milliseconds (default: 10000ms)
-            language: Programming language to use (default: "python"). Currently only Python is supported.
+            language: Programming language to use (default: "python"). Supported: "python", "javascript".
 
         Returns:
             RunResult containing stdout, stderr, return code, original code, and language
@@ -1299,6 +1299,10 @@ class Sandbox:
             result = sbx.run("print('Hello, World!')")
             print(result.stdout)  # Hello, World!
             
+            # Run JavaScript code
+            result = sbx.run("console.log('Hello, World!')", language="javascript")
+            print(result.stdout)  # Hello, World!
+            
             # Run Python with timeout
             result = sbx.run("import time; time.sleep(1)", timeout=3000)
             print(result.stdout)
@@ -1306,8 +1310,8 @@ class Sandbox:
         if not code.strip():
             raise SandboxValidationError("Code cannot be empty")
 
-        if language != "python":
-            raise SandboxValidationError(f"Unsupported language: {language}. Currently only 'python' is supported.")
+        if language not in ("python", "javascript"):
+            raise SandboxValidationError(f"Unsupported language: {language}. Currently only 'python' and 'javascript' are supported.")
 
         # Non-streaming path (JSON response)
         if not streaming:

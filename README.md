@@ -13,7 +13,7 @@ Run untrusted AI generated code, power deep research systems, environment for co
 ## Features
 
 - **Secure Isolation**: Complete VM-level isolation using Firecracker microVMs—every sandbox runs in its own kernel (unlike Docker containers that share the host kernel)
-- **Python Execution**: Run Python code securely in isolated sandboxes
+- **Code Execution**: Run Python and JavaScript code securely in isolated sandboxes
 - **Blazing Fast**: Full VM boot up in under 200ms
 - **Simple API**: Clean, intuitive interface with easy-to-use client SDKs
 - **Production Ready**: Comprehensive error handling and type hints
@@ -36,9 +36,9 @@ export CONCAVE_SANDBOX_API_KEY="your_api_key_here"
 
 Sign up at [concave.ai](https://concave.ai) to get your API key.
 
-### Run Python Code
+### Run Code
 
-Execute Python code securely in isolated sandboxes:
+Execute Python or JavaScript code securely in isolated sandboxes:
 
 ```python
 from concave import sandbox
@@ -66,6 +66,10 @@ print(result.stdout)  # Linux ...
 # Run Python code
 result = sbx.run("print('Hello from Python!')")
 print(result.stdout)  # Hello from Python!
+
+# Run JavaScript code
+result = sbx.run("console.log('Hello from Node.js!')", language="javascript")
+print(result.stdout)  # Hello from Node.js!
 
 # Clean up
 sbx.delete()

@@ -3,7 +3,7 @@ Concave SDK - Python client for the Concave sandbox service.
 
 This module provides a simple, intuitive interface for creating and managing
 isolated code execution environments backed by Firecracker sandboxes. The SDK handles
-sandbox lifecycle management, command execution, and Python code sandboxing.
+sandbox lifecycle management, command execution, and Python and JavaScript code sandboxing.
 
 Example usage (traditional way):
     from concave import Sandbox
@@ -32,7 +32,7 @@ Example usage (context manager way):
     # Sandbox is automatically deleted after the with block
 """
 
-__version__ = "0.6.3"
+__version__ = "0.7.0"
 
 from .sandbox import (
     ExecuteResult,
