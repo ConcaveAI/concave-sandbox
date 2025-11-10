@@ -1146,9 +1146,13 @@ class Sandbox:
 
                 # Handle error responses from the service
                 if "error" in data:
-                    if "sandbox not found" in data["error"].lower():
+                    error_msg = data["error"]
+                    if "sandbox not found" in error_msg.lower():
                         raise SandboxNotFoundError(f"Sandbox {self.id} not found")
-                    raise SandboxExecutionError(f"Execution failed: {data['error']}")
+                    if "timed out" in error_msg.lower():
+                        timeout_val = timeout if timeout else 10000
+                        raise SandboxTimeoutError(error_msg, timeout_ms=timeout_val, operation="execute")
+                    raise SandboxExecutionError(f"Execution failed: {error_msg}")
 
                 return ExecuteResult(
                     stdout=data.get("stdout", ""),
@@ -1173,7 +1177,7 @@ class Sandbox:
         if timeout is None:
             timeout = 300000
 
-        payload = {"command": command, "timeout": int(timeout / 1000)}
+        payload = {"command": command, "timeout": timeout}
 
         # Set per-request timeout (ms to seconds + buffer)
         request_timeout = None
@@ -1338,9 +1342,13 @@ class Sandbox:
 
                 # Handle error responses from the service
                 if "error" in data:
-                    if "sandbox not found" in data["error"].lower():
+                    error_msg = data["error"]
+                    if "sandbox not found" in error_msg.lower():
                         raise SandboxNotFoundError(f"Sandbox {self.id} not found")
-                    raise SandboxExecutionError(f"Code execution failed: {data['error']}")
+                    if "timed out" in error_msg.lower():
+                        timeout_val = timeout if timeout else 10000
+                        raise SandboxTimeoutError(error_msg, timeout_ms=timeout_val, operation="run")
+                    raise SandboxExecutionError(f"Code execution failed: {error_msg}")
 
                 return RunResult(
                     stdout=data.get("stdout", ""),
@@ -1366,7 +1374,7 @@ class Sandbox:
         if timeout is None:
             timeout = 300000
 
-        payload = {"code": code, "language": language, "timeout": int(timeout / 1000)}
+        payload = {"code": code, "language": language, "timeout": timeout}
 
         # Set per-request timeout (ms to seconds + buffer)
         request_timeout = None
