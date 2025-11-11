@@ -1283,7 +1283,7 @@ class Sandbox:
         callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> RunResult:
         """
-        Run code in the sandbox with tmpfs-backed isolation.
+        Run code in the sandbox with secure isolation.
 
         Args:
             code: Code to execute
