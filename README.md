@@ -75,6 +75,68 @@ print(result.stdout)  # Hello from Node.js!
 sbx.delete()
 ```
 
+### Working with Files, Network, and Monitoring
+
+The SDK organizes operations into intuitive namespaces:
+
+```python
+from concave import Sandbox
+
+sbx = Sandbox.create()
+
+# Files namespace - read, write, upload, download
+sbx.files.write("/tmp/data.txt", "Hello, Concave!")
+content = sbx.files.read("/tmp/data.txt")
+print(content)  # Hello, Concave!
+
+# Upload local file to sandbox
+sbx.files.upload("./script.py", "/tmp/script.py")
+
+# Download from sandbox to local
+sbx.files.download("/tmp/output.txt", "./results/output.txt")
+
+# Network namespace - publish ports publicly
+sbx.execute("python3 -m http.server 8000 &")
+url = sbx.network.publish(8000)
+print(f"Access at: https://{url}")  # Access at: https://xyz123.concave.run
+
+# Monitor namespace - health and status
+if sbx.monitor.ping():
+    print("Sandbox is alive!")
+    
+uptime = sbx.monitor.uptime()
+print(f"Uptime: {uptime} seconds")
+
+status = sbx.monitor.status()
+print(f"State: {status['state']}, Executions: {status['exec_count']}")
+
+# Clean up
+sbx.delete()
+```
+
+### Listing Sandboxes
+
+List your active sandboxes with built-in pagination:
+
+```python
+from concave import Sandbox
+
+# List first 10 sandboxes (default)
+sandboxes = Sandbox.list()
+for sbx in sandboxes:
+    print(f"Sandbox {sbx.id}")
+
+# Check for more pages
+if sandboxes.has_more:
+    next_page = Sandbox.list(cursor=sandboxes.next_cursor)
+    
+# Custom limit (max 100)
+sandboxes = Sandbox.list(limit=50)
+
+# Filter sandboxes
+active = Sandbox.list(internet_access=True, min_exec_count=5)
+```
+
 ## Documentation
 
 For complete API reference, advanced examples, error handling, and best practices, visit [docs.concave.ai](https://docs.concave.ai).

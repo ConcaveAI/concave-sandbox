@@ -32,22 +32,28 @@ Example usage (context manager way):
     # Sandbox is automatically deleted after the with block
 """
 
-__version__ = "0.7.1"
+__version__ = "0.7.2"
 
-from .sandbox import (
-    ExecuteResult,
-    RunResult,
-    Sandbox,
-    # Client errors (4xx)
-    SandboxAuthenticationError,
-    SandboxClientError,
-    # Network errors
-    SandboxConnectionError,
-    # Legacy errors (kept for backwards compatibility)
-    SandboxCreationError,
+from .sandbox import Sandbox, sandbox
+from .results import ExecuteResult, RunResult, SandboxList
+from .namespaces import FilesNamespace, NetworkNamespace, MonitorNamespace
+from .exceptions import (
     # Base exceptions
     SandboxError,
-    SandboxExecutionError,
+    SandboxClientError,
+    SandboxServerError,
+    SandboxNetworkError,
+    # Client errors (4xx)
+    SandboxAuthenticationError,
+    SandboxNotFoundError,
+    SandboxRateLimitError,
+    SandboxValidationError,
+    # Server errors (5xx)
+    SandboxUnavailableError,
+    SandboxInternalError,
+    # Network errors
+    SandboxConnectionError,
+    SandboxTimeoutError,
     # File operation errors
     SandboxFileError,
     SandboxFileExistsError,
@@ -58,25 +64,25 @@ from .sandbox import (
     SandboxPermissionDeniedError,
     SandboxUnsupportedMediaTypeError,
     SandboxChecksumMismatchError,
-    SandboxInternalError,
+    # Legacy errors (kept for backwards compatibility)
+    SandboxCreationError,
+    SandboxExecutionError,
     # Response errors
     SandboxInvalidResponseError,
-    SandboxNetworkError,
-    SandboxNotFoundError,
-    SandboxRateLimitError,
-    SandboxServerError,
-    SandboxTimeoutError,
-    # Server errors (5xx)
-    SandboxUnavailableError,
-    SandboxValidationError,
-    sandbox,
 )
 
 __all__ = [
+    # Core classes
     "Sandbox",
+    "sandbox",
+    # Result classes
     "ExecuteResult",
     "RunResult",
-    "sandbox",
+    "SandboxList",
+    # Namespace classes
+    "FilesNamespace",
+    "NetworkNamespace",
+    "MonitorNamespace",
     # Base exceptions
     "SandboxError",
     "SandboxClientError",
